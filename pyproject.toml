@@ -1,0 +1,32 @@
+[project]
+name = "twilite"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Felipe Velasquez", email = "fmoros@student.ethz.ch" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "einstudio>=0.3.0",
+]
+
+[project.scripts]
+twilite = "twilite:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+einstudio = { index = "einlab" }
+
+[[tool.uv.index]]
+name = "einlab"
+url = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple"
+explicit = true
+
+[dependency-groups]
+docs = [
+    "einstudio[docs]>=0.3.0",
+]

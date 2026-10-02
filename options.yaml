@@ -1,0 +1,74 @@
+# options.yaml — the parameters the user edits in the options panel.
+#
+# Each entry becomes one row; its input widget is named <name>_edit (for example
+# self.widgets.sampleInterval_edit in the View). `subset` groups the rows so a layout
+# can show each group in a different card.
+
+# --- Acquisition ---
+sampleInterval:
+  type: intNumber
+  label: "Sample interval (ms)"
+  subset: "acquisition"
+  default: 100
+  minVal: 20
+  maxVal: 2000
+
+windowSize:
+  type: intNumber
+  label: "Samples shown"
+  subset: "acquisition"
+  default: 300
+  minVal: 20
+  maxVal: 5000
+
+signalShape:
+  type: multiChoice
+  label: "Signal shape"
+  subset: "acquisition"
+  options: ["Random walk", "Sine", "Square"]
+  defaultIndex: 0
+
+noiseLevel:
+  type: floatNumber
+  label: "Noise level"
+  subset: "acquisition"
+  default: 1.0
+  minVal: 0.0
+  maxVal: 10.0
+  decimals: 2
+  singleStep: 0.1
+
+# --- Display ---
+units:
+  type: text
+  label: "Units"
+  subset: "display"
+  default: "mV"
+  width: short
+
+showGrid:
+  type: switch
+  label: "Show grid"
+  subset: "display"
+  default: true
+
+autoRange:
+  type: switch
+  label: "Autoscale axes"
+  subset: "display"
+  default: true
+
+# --- Logging ---
+logReadings:
+  type: switch
+  label: "Log readings"
+  subset: "logging"
+  default: false
+
+logEvery:
+  type: intNumber
+  label: "Log every n-th reading"
+  subset: "logging"
+  default: 10
+  minVal: 1
+  maxVal: 1000

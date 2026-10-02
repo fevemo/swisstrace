@@ -1,0 +1,36 @@
+# Application
+layoutFile:  'layouts/mainLayout.py'
+docPath:     'doc/build/html'
+
+# Instrument configuration
+useInstrumentConfig:  true
+instrumentConfigFile: 'instrumentConfig.yaml'
+
+# Options panel
+useOptions:  true
+optionsFile: 'options.yaml'
+
+# Logging
+useLogger:  true
+logFile:    'log.txt'
+logLevel:   'DEBUG'
+logFormat:  '%(levelname)s - %(message)s'
+
+# Main window
+mainWindowTitle:    'Twilite'
+mainWindowMinSizeX: 900
+mainWindowMinSizeY: 700
+# Leave blank to use the EINstudio icon. Point it at a .ico or .png in the app
+# folder to brand the window, the taskbar and the desktop shortcut.
+mainWindowIcon:     ''
+
+# Splash screen (shown while the app loads)
+useSplash:   true
+# Leave blank for a generated title card: the window title in the palette's colours.
+splashImage: ''
+
+# Appearance
+fluentTheme:  'DARK'
+chromeMode:   'native'
+color:        'obsidian_teal'
+shape:        'EINstudioStandard'

@@ -1,0 +1,31 @@
+INFO - Log session 78eea94c2953 started
+INFO - App started
+INFO - UI font family resolved to 'Segoe UI'.
+INFO - Fluent UI theme set to DARK.
+INFO - Run started: Random walk, noise 1.0, window of 300 samples.
+INFO - Run stopped after 25 readings, mean 48.91 mV.
+INFO - Run started: Random walk, noise 1.0, window of 300 samples.
+INFO - Run stopped after 21 readings, mean 49.94 mV.
+INFO - App terminated
+INFO - Log session 3ef23c007f48 started
+INFO - App started
+INFO - UI font family resolved to 'Segoe UI'.
+INFO - Fluent UI theme set to LIGHT.
+INFO - App terminated
+INFO - Log session 4682a8a42a25 started
+INFO - App started
+INFO - UI font family resolved to 'Segoe UI'.
+INFO - Fluent UI theme set to LIGHT.
+INFO - App terminated
+INFO - Log session fc4eb5caabb0 started
+INFO - App started
+INFO - UI font family resolved to 'Segoe UI'.
+INFO - Fluent UI theme set to DARK.
+INFO - App terminated
+INFO - Log session d2db9fef1ac4 started
+INFO - App started
+INFO - UI font family resolved to 'Segoe UI'.
+INFO - Fluent UI theme set to DARK.
+INFO - Run started: Random walk, noise 1.0, window of 300 samples.
+INFO - Run stopped after 13 readings, mean 51.12 mV.
+INFO - App terminated

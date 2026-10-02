@@ -1,0 +1,6 @@
+# Layout settings for mainLayout.py: this app's own geometry (splitter sizes,
+# column widths) and overrides for specific widgets. Shared spacing and card
+# geometry come from the shape profile (styles/shape), not from here.
+
+# Height of the log card at the bottom of the Acquisition page, in pixels.
+logHeight: 160

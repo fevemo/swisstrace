@@ -1,0 +1,8 @@
+# instrumentConfig.yaml — parameters of the instruments this app controls.
+#
+# The template simulates one detector, and the Model reads its baseline from here.
+# Replace it with the settings of your own hardware (ports, channels, calibration).
+
+detector:
+  name: "Simulated photodiode"
+  baseline: 50.0
