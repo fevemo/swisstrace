@@ -1,24 +1,11 @@
-[project]
-name = "twilite"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "Felipe Velasquez", email = "fmoros@student.ethz.ch" }
-]
-requires-python = ">=3.12"
-dependencies = [
-    "einstudio>=0.3.0",
-]
+# uv workspace root. The members are the Qt-free driver (packages/twilite) and the
+# EINstudio app (apps/twiliteacq). `uv sync` installs both plus the test tools.
 
-[project.scripts]
-twilite = "twilite:main"
-
-[build-system]
-requires = ["uv_build>=0.12.10,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv.workspace]
+members = ["packages/twilite", "apps/twiliteacq"]
 
 [tool.uv.sources]
+twilite = { workspace = true }
 einstudio = { index = "einlab" }
 
 [[tool.uv.index]]
@@ -27,6 +14,21 @@ url = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple"
 explicit = true
 
 [dependency-groups]
+dev = [
+    "twilite",
+    "einstudio>=0.3.0",
+    "numpy>=2.0",
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
 docs = [
     "einstudio[docs]>=0.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "hardware: needs a real twilite; runs only with --hardware --host <ip>",
+    "simulator_only: uses fault injection, which only the simulator supports",
+    "app: needs Qt and EINstudio",
 ]
