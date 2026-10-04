@@ -1,8 +1,22 @@
-# instrumentConfig.yaml — parameters of the instruments this app controls.
+# instrumentConfig.yaml — the twilite this installation talks to.
 #
-# The template simulates one detector, and the Model reads its baseline from here.
-# Replace it with the settings of your own hardware (ports, channels, calibration).
+# This file travels with the instrument PC, not with the source code.
 
-detector:
-  name: "Simulated photodiode"
-  baseline: 50.0
+twilite:
+  host: "10.0.52.25"
+  port: 23
+  # Seconds without an answer before the connection counts as lost.
+  timeout_s: 5.0
+  # Reconnect attempts after a lost connection, during an acquisition.
+  reconnectAttempts: 3
+  # Acquisition files (*.csv) and, with rawLog, every byte exchanged with the device.
+  dataDir: "data"
+  rawLog: true
+
+  # true: start a simulated twilite inside the app and connect to it instead.
+  simulate: false
+  simulator:
+    scenario: "bolus"               # background, bolus, calibration-step, long-decay
+    isotope: "F-18"
+    idleTimeout_s: 19.0             # drop an idle connection, as the device does; 0: never
+    port: 0                         # 0: any free port

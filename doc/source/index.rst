@@ -1,17 +1,17 @@
-swisstrace
+Twilite acquisition
 ########################################
 
-.. note::
-   This manual comes with the ``pages`` app template. Replace its pages with the
-   documentation of your application. To add a page, create an ``.rst`` file next to
-   these and list its name in the table of contents below. Rebuild the HTML from the
-   app folder with ``uv run --group docs python -m sphinx doc/source doc/build/html``.
+**Twilite acquisition** records the count rates of a Swisstrace twilite blood sampler
+over its telnet connection and turns them into an activity concentration curve, in
+place of PMOD PSAMPLE's acquisition and correction functions. Its screens are pages
+in the navigation bar on the left: *Acquisition* to connect and record, *Correction*
+for the decay correction and the exports, and *Calibration* to compute the
+calibration factor from a phantom run.
 
-**swisstrace** is a live signal monitor built with EINstudio. It reads a simulated
-detector at a fixed interval and plots the latest readings. Its screens are separate
-pages in the navigation bar on the left: *Acquisition* to run a measurement,
-*Settings* for the display and the log, and *Results* for the statistics of the last
-run.
+.. note::
+   The device's report format is not confirmed yet (see ``doc/protocol.md`` in the
+   repository). Until it is, the app runs against a built-in simulated twilite when
+   ``simulate: true`` is set in ``instrumentConfig.yaml``.
 
 .. toctree::
    :maxdepth: 2

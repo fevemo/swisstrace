@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Twilite acquisition app: runtime output
+apps/twiliteacq/log.txt
+apps/twiliteacq/state.yaml
+apps/twiliteacq/data/
+doc/build/

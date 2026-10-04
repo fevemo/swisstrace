@@ -34,7 +34,7 @@ The firmware has changed between versions. The manual's console shows a *SwissTr
 
 Other facts from the manual that shape the design:
 
-- The counting interval (1, 2, 5 or 10 s) is set on the twilite's touch screen. `qrate` only sets how often values are reported. Values can therefore repeat between counter updates, and the `[n]` counter is what lets us tell a new sample from a repeated one.
+- The manual says the counting interval (1, 2, 5 or 10 s) is set on the twilite's touch screen and `qrate` only sets how often values are reported. The device contradicts this (see the open questions): over telnet, `qrate` sets the counting window, every line is a new sample, and `[n]` counts printed lines.
 - PSAMPLE timestamps every sample with the PC's clock, and users must sync that clock with the PET scanner. We record the PC time too.
 - The manual's command menu lists `qrate 50` as 50000 ms, which contradicts n × 100 ms. Probably a typo; to verify.
 
@@ -42,13 +42,28 @@ Other facts from the manual that shape the design:
 
 Answer them in a 30-minute session on the device recording everything with PuTTY's session log:
 
-- [ ] Field order and units of a `showc` line. Counts per counting interval, or counts per second?
-- [ ] Does `[n]` go up once per counting interval or once per printed line? Does it reset on reconnect or on power-up?
-- [ ] Can the counting interval be set over telnet at all, or only on the touch screen? This decides what "set the sampling rate" means in our scope.
-- [ ] Does `showc` need the green play button pressed on the touch screen (PMTs on) first? What does it print otherwise?
-- [ ] Login: is there one on current firmware? Which firmware versions and twilite generations are in the field?
-- [ ] Exact line endings and any telnet option negotiation (IAC bytes) on connect.
-- [ ] How do you stop `showc`? Another command, a blank line, or only a disconnect?
+- [x] Field order and units of a `showc` line. Counts per counting interval, or counts per second?
+    - A: counts per second (sampling at 10hz gives only multiples of 10 for the counts)
+    - Checked 2026-10-03: at `qrate 10` the values are plain integers. The device counts over the `qrate` period and scales to counts per second, so `qrate 1` gives a 10 cps resolution.
+    - Field order: `[n] singles1 singles2 coincidences 0.0 0.0` (checked with a source at one detector). `ccnt` prints ` Counter 1 = …`, ` Counter 2 = …` and ` Counter 3 = …` in the same order.
+- [x] Does `[n]` go up once per counting interval or once per printed line? Does it reset on reconnect or on power-up?
+    - A: once per printed line i.e if you stop the output and restart it, `[n]` continues from the last printed value rather than resetting.
+    - From the raw logs: `[n]` also continues across a reconnect (647 → 648, 733 → 734) and across a `qrate` change. It restarts at `[0]` on power-up (the device was power-cycled before 21:23 on 2026-10-03). `show` also advances it.
+- [x] Can the counting interval be set over telnet at all, or only on the touch screen? This decides what "set the sampling rate" means in our scope.
+    - A: qrate sets the reporting rate, counts are always in counts per second.
+    - No: there is no telnet command for it. `qrate` sets both the report period and the counting window. The touch-screen interval does not seem to affect `showc`. Check whether it affects anything else.
+- [x] Does `showc` need the green play button pressed on the touch screen (PMTs on) first? What does it print otherwise?
+    - A: yes, it requires the green play button to be pressed; otherwise, it doesnt send any data.
+- [x] Login: is there one on current firmware? Which firmware versions and twilite generations are in the field?
+    - A: yes, default login is required on current firmware.
+    - Recorded: banner `Coincident Counter - Telnet Server V3.00, please login...`, prompts `Username: ` and `Password: `, then `admin` / `ccount`. Still open: which firmware versions and generations are in the field.
+    - The login checks nothing: any user name and password get in (tried 2026-10-03).
+- [x] Exact line endings and any telnet option negotiation (IAC bytes) on connect.
+    - A (from the raw logs): every line ends in `\r\n`. The prompts `> `, `Username: ` and `Password: ` have no line ending. There is no telnet negotiation: not one IAC byte in eight sessions. The device does not echo commands. The banner uses ANSI escape codes (`ESC[2J` clear screen, `ESC[37;44m` colours, `ESC[0m`), which the driver now strips. The device accepts `\r\n` from the client.
+- [x] How do you stop `showc`? Another command, a blank line, or only a disconnect?
+    - A: `showc` is stopped by pressing enter.
+    - One more report line can arrive after the Enter, before the `> ` prompt; the driver reads up to the prompt.
+    - The disconnects a few seconds after stopping are the device's **idle timeout**. It closes a connection after 19.0–19.6 s without traffic at the prompt, with or without a previous `showc`. A bare Enter resets the timer, and the `showc` stream counts as traffic. PuTTY sends nothing while you wait, so it drops too. The app now sends an Enter after 8 s of idle time.
 - [ ] A real PSAMPLE `.crv` file and a corrected TAC export, so our exports can match them byte for byte where it matters.
 - [ ] Which isotopes customers use, and the calibration workflow they follow today (step function or Offset: Enter).
 - [ ] Target OS for customers, and whether instrument PCs have internet access (this decides how the app is installed, see Risks).
@@ -69,7 +84,7 @@ twilite-acq/
 ├── LICENSE                     # GPLv3
 ├── packages/twilite/           # pure Python, no Qt
 │   └── src/twilite/
-│       ├── protocol.py         # line parsing, IAC stripping, command strings
+│       ├── protocol.py         # device facts, line parsing, command strings
 │       ├── driver.py           # TwiliteClient: connect, login, start/stop, stream
 │       ├── sample.py           # Sample dataclass
 │       ├── storage.py          # streaming writer, recovery, exports
@@ -77,8 +92,7 @@ twilite-acq/
 │       ├── isotopes.py         # half-lives and branching ratios
 │       └── sim/
 │           ├── server.py       # asyncio telnet server
-│           ├── profiles.py     # firmware variants (banner, login, commands)
-│           └── scenarios.py    # background, bolus, calibration step, faults
+│           └── scenarios.py    # background, bolus, calibration step, replay
 ├── apps/twiliteacq/            # EINstudio app
 │   ├── main.py
 │   ├── model.py
@@ -86,7 +100,7 @@ twilite-acq/
 │   ├── view.py
 │   ├── layouts/mainLayout.py
 │   ├── config.yaml
-│   └── instrumentConfig.yaml   # IP, port, login, simulate: true/false
+│   └── instrumentConfig.yaml   # IP, port, simulate: true/false
 ├── tests/
 │   ├── fixtures/transcripts/   # raw sessions recorded from real devices
 │   ├── unit/
@@ -101,9 +115,8 @@ twilite-acq/
 `TwiliteClient` is a blocking, single-connection client built on `socket` (Python 3.13 dropped `telnetlib`). It runs in a plain thread, so it works the same from a script, from a test or from EINstudio's ViewModel worker.
 
 ```python
-client = TwiliteClient(host="10.0.52.25", port=23, user="admin", password="ccount",
-                       timeout=5.0, raw_log=Path("session.log"))
-client.connect()                 # banner, optional login, wait for prompt
+client = TwiliteClient(host="10.0.52.25", port=23, timeout=5.0, raw_log=Path("session.log"))
+client.connect()                 # banner, login, wait for prompt
 client.set_query_rate(10)        # qrate 10 -> 1 report per second
 for sample in client.stream():   # sends showc, yields Sample objects
     ...
@@ -114,22 +127,23 @@ client.stop(); client.close()    # stop showc, send bye
 
 How it behaves:
 
-1. **Parsing lives in `protocol.py`** as pure functions: `strip_iac(bytes)`, `split_lines(buffer)` and `parse_sample(line)`. A line that doesn't parse is logged and skipped, never fatal. The field order comes from one table in the code, so fixing it after the hardware session is a one-line change.
-2. **Telnet negotiation:** any `IAC DO/WILL` request is refused with `WONT/DONT`, and IAC sequences are removed from the data. That's the minimum a raw socket needs to talk to a telnet server.
-3. **Duplicates and gaps:** the driver follows `[n]`. A repeated index means the counter hasn't updated, so the sample is dropped. A jump in the index is reported as a gap event with the number of samples missed. A drop in the index means the device restarted, which is reported as a reset event.
-4. **Connection loss:** a read timeout or closed socket raises `ConnectionLost`. The driver doesn't reconnect by itself; the Model decides whether to, so tests can check both cases.
-5. **Raw log:** every byte in and out is appended to a log file with timestamps. This is the most useful tool for diagnosing problems at a customer site.
-6. **Lazy import:** the EINstudio Model imports the driver only inside `connect()`, as EINstudio's instrument guide recommends, so the app starts even when a package is missing.
+1. **Parsing lives in `protocol.py`** as pure functions: `split_lines(buffer)`, `parse_sample(line)` and `parse_counters(reply)`. A line that doesn't parse is logged and skipped, never fatal. Every device fact (field order, prompts, idle timeout) is a constant at the top of the module.
+2. **Only the observed protocol:** the device sends no telnet negotiation and doesn't echo, so the driver speaks plain `\r\n` lines over a socket. Older firmware is not supported until a session with one is recorded (see `doc/protocol.md`).
+3. **`[n]` is stored, not policed:** it goes up by one per printed line and can't skip inside a TCP connection, so the driver only logs a warning if it ever does. Lost data shows up as lost time, which the Model records as connection events.
+4. **Idle keepalive:** the device drops a connection after 19 s of silence at the prompt, so the app sends an empty line after 8 s of idle time.
+5. **Connection loss:** a read timeout or closed socket raises `ConnectionLost`. The driver doesn't reconnect by itself; the Model decides whether to, so tests can check both cases.
+6. **Raw log:** every byte in and out is appended to a log file with timestamps. This is the most useful tool for diagnosing problems at a customer site.
+7. **Lazy import:** the EINstudio Model imports the driver only inside `connect()`, as EINstudio's instrument guide recommends, so the app starts even when a package is missing.
 
 ## Simulated device
 
 `twilite.sim` is an asyncio TCP server that behaves like the device, running on localhost:2323 by default. It is used in three ways: as the backend while developing the GUI, as the target for the integration tests, and for customer demos.
 
 ```
-uv run python -m twilite.sim --profile coincident-counter --scenario bolus --isotope F-18
+uv run python -m twilite.sim --scenario bolus --isotope F-18
 ```
 
-**Firmware profiles** set the banner, whether a login is required, the command set, line endings and IAC negotiation. Two profiles to start: `blood-sampler` (as in the manual) and `coincident-counter` (as in the screenshot). After the hardware session, the recorded transcript decides each profile's exact bytes.
+It copies the bytes recorded from a Coincident Counter V3.00 on 2026-10-03: banner, login (which accepts anything), replies, one `[n]` per printed line, counts per second over the `qrate` period, and the 19 s idle timeout.
 
 **Scenarios** generate the counts:
 
@@ -141,7 +155,7 @@ uv run python -m twilite.sim --profile coincident-counter --scenario bolus --iso
 | `long-decay` | A constant source over several half-lives | QA check: decay-corrected result is flat |
 | `replay` | Plays back a recorded transcript at real speed | Regression on real data |
 
-**Fault injection** via command-line flags or a test API: drop the connection after N samples, send a malformed line, stall for X seconds, skip or repeat `[n]`, restart the counter, refuse the login. The scenarios use a fixed random seed, so a test always gets the same numbers.
+**Fault injection** via command-line flags or a test API: drop the connection after N samples, or stall for X seconds. The scenarios use a fixed random seed, so a test always gets the same numbers.
 
 ## Test suite
 
@@ -149,8 +163,8 @@ pytest, in four layers. `uv run pytest` runs the first three in a few seconds wi
 
 | Layer | Runs against | Covers |
 | --- | --- | --- |
-| Unit | Pure functions | Line parsing (including the manual's sample lines and malformed input), IAC stripping, split lines across TCP packets, duplicate/gap/reset detection, decay and calibration maths against values worked out by hand, streaming writer and recovery of a half-written file |
-| Integration | Simulator on a random localhost port | Connect and login for both profiles, `qrate`, start/stop, a full acquisition to disk, every fault injection, a timeout firing within its limit |
+| Unit | Pure functions | Line parsing (recorded device lines and malformed input), split lines across TCP packets, decay and calibration maths against values worked out by hand, streaming writer and recovery of a half-written file |
+| Integration | Simulator on a random localhost port | Connect and login, `qrate`/`grate`/`ccnt`, start/stop, a full acquisition to disk, idle timeout and keepalive, dropped and stalled connections, replay of a recorded session |
 | App | EINstudio Model and ViewModel, headless | Model runs in a plain script with the simulator (no Qt); ViewModel emits the right signals in the right order; one pytest-qt smoke test opens the window, connects and acquires for 5 s |
 | Hardware | A real twilite | The integration tests repeated on the device, a 30-minute run with zero lost samples, cable pull and reconnect, power-cycle during acquisition |
 
@@ -166,7 +180,7 @@ GitHub Actions runs the first three layers on Windows, macOS and Linux for every
 The app follows EINstudio's MVVM-Layout rules: calls go inward, results come back out as signals, and the Model never imports Qt.
 
 - **`model.py`** owns the `TwiliteClient` (or the simulator's address when `simulate: true`), the sample buffer, the open storage writer, and the correction settings. Its `acquire()` loop runs in a plain thread. It takes a callback, so it can also run from a script.
-- **`viewmodel.py`** owns the worker thread and turns Model callbacks into signals: `connectionChanged(bool)`, `acquisitionChanged(bool)`, `samplesAppended(t, s1, s2, coinc)`, `gapDetected(int)`, `errorOccurred(str)`. It checks prerequisites before every call (connected? already running?) and turns exceptions into messages. It sends plot updates at most 10 times a second, whatever the data rate.
+- **`viewmodel.py`** owns the worker thread and turns Model callbacks into signals: `connectionChanged(bool)`, `acquisitionChanged(bool)`, `samplesAppended(t, s1, s2, coinc)`, `eventRecorded(kind, text)`, `errorOccurred(str)`. It checks prerequisites before every call (connected? already running?) and turns exceptions into messages. It sends plot updates at most 10 times a second, whatever the data rate.
 - **`view.py`** wires buttons to ViewModel methods and signals to plot and status updates. Closing the window disconnects cleanly first.
 - **`layouts/mainLayout.py`** places the widgets.
 
