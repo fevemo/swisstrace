@@ -1,14 +1,18 @@
 import time
+from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from twilite import Sample, get_isotope
 from twilite.correction import CorrectionSettings
 from twilite.storage import (
-    AcquisitionWriter, export_crv, export_csv, export_events, export_pmod_blood, find_partial_files,
+    Acquisition, AcquisitionWriter, export_crv, export_csv, export_events, export_pmod_blood, export_pmod_tac,
+    find_partial_files,
     read_acquisition, recover,
 )
 
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 T0_WALL = 1_790_000_000.0
 T0_MONO = 500.0
 
@@ -134,9 +138,27 @@ def test_export_csv_with_correction(acquisition, tmp_path):
 
 
 def test_export_crv(acquisition, tmp_path):
-    lines = export_crv(acquisition, tmp_path / "run.crv").read_bytes().split(b"\r\n")
+    lines = export_crv(acquisition, tmp_path / "run.crv").read_bytes().split(b"\n")
     fields = lines[0].split(b"\t")
-    assert len(fields) == 5 and fields[2:] == [b"120", b"2000", b"1500"]
+    assert len(fields) == 4 and fields[1:] == [b"120", b"2000", b"1500"]
+    assert len(lines) == 11 and lines[-1] == b""
+
+
+def test_export_crv_matches_psample(tmp_path):
+    """Reading back a .crv written by PSAMPLE and exporting it again gives the same bytes."""
+    original = FIXTURES / "psample" / "PMOD_Psample_Test_D1_D1.crv"
+    acq = Acquisition(original)
+    for i, line in enumerate(original.read_text().splitlines()):
+        stamp, coincidences, singles1, singles2 = line.split("\t")
+        *date, seconds = stamp.split(" ")
+        whole, _, ms = seconds.partition(".")
+        acq.t_wall.append(datetime(*map(int, date), int(whole), int(ms) * 1000).timestamp())
+        acq.index.append(i)
+        acq.coincidences.append(int(coincidences))
+        acq.singles1.append(int(singles1))
+        acq.singles2.append(int(singles2))
+    assert len(acq) == 114
+    assert export_crv(acq, tmp_path / "again.crv").read_bytes() == original.read_bytes()
 
 
 def test_export_pmod_blood(acquisition, tmp_path):
@@ -147,6 +169,18 @@ def test_export_pmod_blood(acquisition, tmp_path):
     t, value = lines[1].split("\t")
     assert float(t) == pytest.approx(0.0, abs=0.01)
     assert float(value) == pytest.approx(0.5 * 5 / 0.967, rel=1e-5)
+    assert len(lines) == 6
+
+
+def test_export_pmod_tac(acquisition, tmp_path):
+    settings = CorrectionSettings(get_isotope("F-18"), pet_start=T0_WALL + 5, background=120.0,
+                                  calibration_factor=0.5)
+    lines = export_pmod_tac(acquisition, tmp_path / "run.tac", settings).read_text().splitlines()
+    assert lines[0] == "start[seconds]\tend[kBq/cc]\twhole-blood"
+    assert [float(v) for v in lines[1].split("\t")[:2]] == [0.0, 0.0]  # frame clipped at the PET start
+    start, end, value = lines[2].split("\t")
+    assert (float(start), float(end)) == pytest.approx((0.0, 1.0), abs=0.01)  # 1 s between samples
+    assert float(value) == pytest.approx(0.5 * 6 * 2 ** (1 / 6586.2) / 0.967, rel=1e-4)
     assert len(lines) == 6
 
 

@@ -13,6 +13,7 @@ import csv
 import io
 import math
 import os
+import statistics
 import threading
 import time
 from dataclasses import dataclass, field
@@ -288,10 +289,8 @@ def recover(path: str | Path) -> Path:
 # Exports                                                                     #
 ###############################################################################
 
-#: PROVISIONAL until a real PSAMPLE .crv file is available to compare against: the
-#: manual only says "tab-separated date and time, then coincidences and singles".
-CRV_DATE_FORMAT = "%d.%m.%Y"
-CRV_TIME_FORMAT = "%H:%M:%S"
+#: Line ending of PSAMPLE's .crv (as in tests/fixtures/psample).
+CRV_LINE_END = "\n"
 
 
 def export_csv(acq: Acquisition, path: str | Path, settings: CorrectionSettings | None = None) -> Path:
@@ -325,16 +324,29 @@ def export_csv(acq: Acquisition, path: str | Path, settings: CorrectionSettings 
 
 
 def export_crv(acq: Acquisition, path: str | Path) -> Path:
-    """Write a PSAMPLE-style ``.crv``: date, time, coincidences, singles 1, singles 2."""
+    """Write a PSAMPLE ``.crv``: time stamp, coincidences, singles 1, singles 2.
+
+    Matches a file written by PSAMPLE byte for byte: no header, tab-separated, and
+    the time stamp ``Y M D h m s.mmm`` with unpadded fields (``2026 10 4 14 53 0.380``).
+    """
     path = Path(path)
-    with open(path, "w", newline="", encoding="latin-1") as file:
+    with open(path, "w", newline="", encoding="ascii") as file:
         for i in range(len(acq)):
-            stamp = datetime.fromtimestamp(acq.t_wall[i])
             file.write("\t".join([
-                stamp.strftime(CRV_DATE_FORMAT), stamp.strftime(CRV_TIME_FORMAT),
-                str(acq.coincidences[i]), str(acq.singles1[i]), str(acq.singles2[i]),
-            ]) + "\r\n")
+                _crv_stamp(acq.t_wall[i]),
+                _crv_count(acq.coincidences[i]), _crv_count(acq.singles1[i]), _crv_count(acq.singles2[i]),
+            ]) + CRV_LINE_END)
     return path
+
+
+def _crv_stamp(t_wall: float) -> str:
+    # Rounded to the millisecond first, so the microseconds are a whole number of them.
+    s = datetime.fromtimestamp(round(t_wall, 3))
+    return f"{s.year} {s.month} {s.day} {s.hour} {s.minute} {s.second}.{round(s.microsecond / 1000):03d}"
+
+
+def _crv_count(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else str(value)
 
 
 def export_pmod_blood(acq: Acquisition, path: str | Path, settings: CorrectionSettings) -> Path:
@@ -351,6 +363,30 @@ def export_pmod_blood(acq: Acquisition, path: str | Path, settings: CorrectionSe
         for t, value in zip(t_out, values):
             if not math.isnan(value):
                 file.write(f"{t:.1f}\t{value:.6g}\r\n")
+    return path
+
+
+def export_pmod_tac(acq: Acquisition, path: str | Path, settings: CorrectionSettings,
+                    frame_s: float | None = None) -> Path:
+    """Write the corrected TAC in PMOD's frame format (start and end in seconds, kBq/cc).
+
+    Each sample covers the counting window that ends when its report arrived, so its
+    frame is ``[t - frame_s, t]``, with ``frame_s`` the report period (the median spacing
+    of the samples when not given). A frame starting before the PET start is clipped at 0.
+
+    PROVISIONAL until compared with a TAC exported by PMOD.
+    """
+    path = Path(path)
+    if frame_s is None:
+        if len(acq) < 2:
+            raise ValueError("A TAC needs at least two samples to know the frame length")
+        frame_s = statistics.median(b - a for a, b in zip(acq.t_wall, acq.t_wall[1:]))
+    t_out, values, _ = apply(settings, acq.t_wall, acq.coincidences)
+    with open(path, "w", newline="", encoding="latin-1") as file:
+        file.write("start[seconds]\tend[kBq/cc]\twhole-blood\r\n")
+        for t, value in zip(t_out, values):
+            if not math.isnan(value):
+                file.write(f"{max(t - frame_s, 0.0):.1f}\t{t:.1f}\t{value:.6g}\r\n")
     return path
 
 

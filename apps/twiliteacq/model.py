@@ -49,6 +49,7 @@ class Model:
         self.fixedBackground = None
         self.calibrationFactor = 1.0
         self.calibrationRun = None
+        self.correctionData = None
 
     ###########################################################################
     # Connection                                                              #
@@ -267,23 +268,15 @@ class Model:
             for series in (self.singles1, self.singles2, self.coincidences):
                 series.append(math.nan)
 
-    def getTrace(self, corrected=False):
-        """Return ``{"t", "singles1", "singles2", "coincidences"}`` arrays of the run so far.
-
-        With ``corrected``, ``coincidences`` holds the activity concentration (NaN before
-        the PET start or while the correction cannot be computed).
-        """
+    def getTrace(self):
+        """Return ``{"t", "singles1", "singles2", "coincidences"}`` arrays of the run so far."""
         with self._lock:
-            trace = {
+            return {
                 "t": np.array(self.tRel),
                 "singles1": np.array(self.singles1),
                 "singles2": np.array(self.singles2),
                 "coincidences": np.array(self.coincidences),
             }
-            tWall = np.array(self.tWall)
-        if corrected:
-            trace["coincidences"] = self._correctedArray(tWall, trace["coincidences"])
-        return trace
 
     def getStats(self):
         with self._lock:
@@ -303,11 +296,16 @@ class Model:
         return {name: (iso.half_life_s, iso.branching_ratio) for name, iso in ISOTOPES.items()}
 
     def isotope(self):
+        return self.makeIsotope(self.isotopeName, self.customHalfLife_s, self.customBranchingRatio)
+
+    @staticmethod
+    def makeIsotope(name, customHalfLife_s=None, customBranchingRatio=None):
+        """The tabulated isotope ``name``, or for "Custom" one with the given half-life (s) and branching ratio."""
         from twilite import Isotope, get_isotope
 
-        if self.isotopeName == "Custom":
-            return Isotope("Custom", self.customHalfLife_s, self.customBranchingRatio)
-        return get_isotope(self.isotopeName)
+        if name == "Custom":
+            return Isotope("Custom", customHalfLife_s, customBranchingRatio)
+        return get_isotope(name)
 
     def setCorrection(self, isotopeName, petStart, fixedBackground, calibrationFactor,
                       customHalfLife_s=None, customBranchingRatio=None):
@@ -333,26 +331,51 @@ class Model:
             raise ValueError("Set the PET start time first")
         return CorrectionSettings(self.isotope(), self.petStart, self.fixedBackground, self.calibrationFactor)
 
-    def _correctedArray(self, tWall, rate):
+    def currentFile(self):
+        """File of the running acquisition, or else of the last one; None before any."""
+        writer = self.writer
+        if writer is not None:
+            return str(writer.path)
+        return str(self.lastFile) if self.lastFile is not None else None
+
+    def loadCorrectionData(self, path):
+        """Read the acquisition to correct; return ``(t_wall, coincidences)`` arrays.
+
+        ``path`` may be the file of the running acquisition: every row written so far is read.
+        """
+        from twilite.storage import read_acquisition
+
+        acq = read_acquisition(path)
+        if len(acq) == 0:
+            raise ValueError(f"{os.path.basename(path)} holds no samples")
+        self.correctionData = acq
+        self.logger.info(f"Data to correct: {path} ({len(acq)} samples)")
+        return np.array(acq.t_wall), np.array(acq.coincidences, dtype=float)
+
+    def measuredBackground(self, petStart):
+        """Mean coincidence rate of the loaded data before ``petStart``; None if there is none."""
         from twilite.correction import background_before_start
 
-        out = np.full(rate.shape, np.nan)
-        if self.petStart is None or rate.size == 0:
-            return out
-        isotope = self.isotope()
-        tPet = tWall - self.petStart
-        if self.fixedBackground is not None:
-            background = self.fixedBackground
-        else:
-            try:
-                background = background_before_start(tPet.tolist(), rate.tolist())
-            except ValueError:
-                return out
-        lam = math.log(2) / isotope.half_life_s
-        after = tPet >= 0
-        out[after] = (self.calibrationFactor * (rate[after] - background) * np.exp(lam * tPet[after])
-                      / isotope.branching_ratio)
-        return out
+        acq = self.correctionData
+        if acq is None or petStart is None:
+            return None
+        try:
+            return background_before_start([t - petStart for t in acq.t_wall], acq.coincidences)
+        except ValueError:
+            return None
+
+    def correctData(self):
+        """Correct the loaded data; return ``(t from the PET start, kBq/cc, background used)``.
+
+        Returns None while no data is loaded or the PET start is not set.
+        """
+        from twilite.correction import apply
+
+        if self.correctionData is None or self.petStart is None:
+            return None
+        acq = self.correctionData
+        t, activity, background = apply(self.correctionSettings(), acq.t_wall, acq.coincidences)
+        return np.array(t), np.array(activity), background
 
     def _settingsMetadata(self):
         isotope = self.isotope()
@@ -383,7 +406,7 @@ class Model:
         run = self.calibrationRun
         return run.t_wall[0] - run.t_rel_s[0]
 
-    def computeCalibration(self, backgroundWindow, plateauWindow, activityPet, referenceTime):
+    def computeCalibration(self, backgroundWindow, plateauWindow, activityPet, referenceTime, isotope=None):
         """Return CF from the loaded run.
 
         Args:
@@ -391,6 +414,7 @@ class Model:
             plateauWindow: ``(start, end)`` in seconds from the run start.
             activityPet: Phantom activity concentration from the PET, kBq/cc.
             referenceTime: PC time the PET activity refers to, seconds since the epoch.
+            isotope: The phantom's :class:`~twilite.Isotope`; None for the correction's.
         """
         from twilite.correction import calibration_factor, mean_in_window
 
@@ -401,9 +425,11 @@ class Model:
         offset = self.calibrationRunStart() - referenceTime
         tRef = [t + offset for t in run.t_rel_s]
         plateau = (plateauWindow[0] + offset, plateauWindow[1] + offset)
-        cf = calibration_factor(tRef, run.coincidences, background, self.isotope(), plateau, activityPet)
-        self.logger.info(f"Calibration factor {cf:.6g} (background {background:.4g}, "
-                         f"A_PET {activityPet:g} kBq/cc, {self.isotope().name})")
+        isotope = isotope or self.isotope()
+        cf = calibration_factor(tRef, run.coincidences, background, isotope, plateau, activityPet)
+        # Debug: the View recomputes on every change, such as each step of a dragged window.
+        self.logger.debug(f"Calibration factor {cf:.6g} (background {background:.4g}, "
+                          f"A_PET {activityPet:g} kBq/cc, {isotope.name})")
         return cf
 
     ###########################################################################
@@ -426,22 +452,37 @@ class Model:
         return recovered
 
     def export(self, kind, sourcePath, targetPath):
-        """Export an acquisition file; ``kind`` is csv, crv, pmod or events."""
+        """Export the raw data of an acquisition file; ``kind`` is csv, crv or events."""
         from twilite import storage
 
         acq = storage.read_acquisition(sourcePath)
         if kind == "csv":
-            settings = self.correctionSettings() if self.petStart is not None else None
-            storage.export_csv(acq, targetPath, settings)
+            storage.export_csv(acq, targetPath)
         elif kind == "crv":
             storage.export_crv(acq, targetPath)
-        elif kind == "pmod":
-            storage.export_pmod_blood(acq, targetPath, self.correctionSettings())
         elif kind == "events":
             storage.export_events(acq, targetPath)
         else:
             raise ValueError(f"Unknown export {kind!r}")
         self.logger.info(f"Exported {kind}: {targetPath}")
+        return targetPath
+
+    def exportCorrected(self, kind, targetPath):
+        """Export the loaded data, corrected; ``kind`` is bld (PMOD blood), tac (PMOD TAC) or csv."""
+        from twilite import storage
+
+        if self.correctionData is None:
+            raise ValueError("Load the data to correct first")
+        settings = self.correctionSettings()
+        if kind == "bld":
+            storage.export_pmod_blood(self.correctionData, targetPath, settings)
+        elif kind == "tac":
+            storage.export_pmod_tac(self.correctionData, targetPath, settings)
+        elif kind == "csv":
+            storage.export_csv(self.correctionData, targetPath, settings)
+        else:
+            raise ValueError(f"Unknown export {kind!r}")
+        self.logger.info(f"Exported corrected {kind}: {targetPath}")
         return targetPath
 
     ###########################################################################

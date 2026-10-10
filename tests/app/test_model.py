@@ -1,6 +1,5 @@
 """The app's Model in plain Python, with the simulator: no Qt, no EINstudio."""
 
-import math
 import subprocess
 import sys
 import threading
@@ -10,10 +9,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from twilite import ConnectionLost, Sample, get_isotope
+from twilite import ConnectionLost, Sample
 from twilite.storage import AcquisitionWriter, read_acquisition
 
-from tests.app.conftest import APP_DIR
+from tests.app.conftest import APP_DIR, write_step_run
 
 
 def acquire_in_thread(model, qrate=1, endAfter_s=None):
@@ -156,21 +155,6 @@ def test_acquire_needs_a_connection(model):
         model.acquire(1)
 
 
-def test_corrected_trace(model):
-    model.connect()
-    model.acquire(qrate=1, endAfter_s=1.0)
-    raw = model.getTrace()
-    assert np.isnan(model.getTrace(corrected=True)["coincidences"]).all()  # no PET start yet
-    petStart = model.tWall[2]
-    model.setCorrection("F-18", petStart, fixedBackground=None, calibrationFactor=2.0)
-    corrected = model.getTrace(corrected=True)["coincidences"]
-    assert np.isnan(corrected[:2]).all()
-    background = np.mean(raw["coincidences"][:2])
-    lam = math.log(2) / get_isotope("F-18").half_life_s
-    expected = 2.0 * (raw["coincidences"][3] - background) * math.exp(lam * (model.tWall[3] - petStart)) / 0.967
-    assert corrected[3] == pytest.approx(expected)
-
-
 def test_custom_isotope(model):
     model.setCorrection("Custom", None, None, 1.0, customHalfLife_s=100.0, customBranchingRatio=0.5)
     assert model.isotope().half_life_s == 100.0
@@ -179,16 +163,8 @@ def test_custom_isotope(model):
 
 
 def test_calibration_factor_from_a_run(model, tmp_path):
-    # Background 120 before t = 100 s, then 120 + 1000 * exp(-lambda t): CF = 50 * 0.967 / 1000.
-    isotope = get_isotope("F-18")
-    lam = math.log(2) / isotope.half_life_s
     start = 1_790_000_000.0
-    writer = AcquisitionWriter(tmp_path, start_wall=start, start_mono=0.0)
-    for i in range(60):
-        t = i * 5.0
-        rate = 120 + (1000 * math.exp(-lam * t) if t >= 100 else 0)
-        writer.write_sample(Sample(i, 0, 0, rate, (), "", start + t, t))
-    path = writer.finish()
+    path = write_step_run(tmp_path, start)
 
     t, coincidences = model.loadCalibrationRun(str(path))
     assert len(t) == 60 and coincidences[0] == 120
@@ -196,6 +172,9 @@ def test_calibration_factor_from_a_run(model, tmp_path):
     model.setCorrection("F-18", None, None, 1.0)
     cf = model.computeCalibration((0, 95), (150, 290), 50.0, referenceTime=start)
     assert cf == pytest.approx(50 * 0.967 / 1000, rel=1e-4)
+    # An explicit isotope instead of the correction's: no decay, no branching.
+    flat = model.makeIsotope("Custom", 1e12, 1.0)
+    assert model.computeCalibration((0, 95), (150, 290), 50.0, start, flat) > cf
 
 
 def test_partial_files_are_found_and_recovered(model):
@@ -209,19 +188,54 @@ def test_partial_files_are_found_and_recovered(model):
     assert model.findPartialFiles() == []
 
 
-def test_exports(model, tmp_path):
+def test_raw_exports(model, tmp_path):
     model.connect()
     path = model.acquire(qrate=1, endAfter_s=0.8)
+    model.setCorrection("F-18", read_acquisition(path).t_wall[1], None, 1.0)
     model.export("crv", path, tmp_path / "a.crv")
     model.export("events", path, tmp_path / "a_events.csv")
-    model.export("csv", path, tmp_path / "raw.csv")  # no PET start: raw only
+    model.export("csv", path, tmp_path / "raw.csv")
+    assert "activity_kBq_cc" not in (tmp_path / "raw.csv").read_text()  # raw even with a PET start
+
+
+def test_correction_data_and_corrected_exports(model, tmp_path):
+    model.connect()
+    assert model.currentFile() is None
     with pytest.raises(ValueError):
-        model.export("pmod", path, tmp_path / "a.bld")  # needs the PET start
-    model.setCorrection("F-18", read_acquisition(path).t_wall[1], None, 1.0)
-    model.export("pmod", path, tmp_path / "a.bld")
-    model.export("csv", path, tmp_path / "corrected.csv")
-    assert "activity_kBq_cc" in (tmp_path / "corrected.csv").read_text()
+        model.exportCorrected("bld", tmp_path / "a.bld")  # nothing loaded
+    path = model.acquire(qrate=1, endAfter_s=0.8)
+    assert model.currentFile() == path
+
+    t_wall, coincidences = model.loadCorrectionData(path)
+    assert len(t_wall) == len(coincidences) >= 3
+    assert model.correctData() is None  # no PET start yet
+    with pytest.raises(ValueError):
+        model.exportCorrected("bld", tmp_path / "a.bld")
+
+    model.setCorrection("F-18", t_wall[1], None, 1.0)
+    t, activity, background = model.correctData()
+    assert t[0] == pytest.approx(0.0) and len(activity) == len(t_wall) - 1
+    assert background == pytest.approx(coincidences[0])
+    model.exportCorrected("bld", tmp_path / "a.bld")
+    model.exportCorrected("tac", tmp_path / "a.tac")
+    model.exportCorrected("csv", tmp_path / "corrected.csv")
     assert (tmp_path / "a.bld").read_text().startswith("sample-time[seconds]")
+    assert (tmp_path / "a.tac").read_text().startswith("start[seconds]")
+    assert "activity_kBq_cc" in (tmp_path / "corrected.csv").read_text()
+
+
+def test_correction_data_of_a_running_acquisition(model):
+    model.connect()
+    thread, result, _ = acquire_in_thread(model)
+    deadline = time.monotonic() + 5
+    while model.getStats()["samples"] < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert model.currentFile().endswith(".partial.csv")
+    t_wall, _ = model.loadCorrectionData(model.currentFile())
+    assert len(t_wall) >= 2
+    model.requestStop()
+    thread.join(5)
+    assert "error" not in result
 
 
 def test_settings_round_trip(model, tmp_path, monkeypatch):

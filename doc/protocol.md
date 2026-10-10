@@ -78,7 +78,8 @@ which the app records as connection events.
 - [ ] What does the touch-screen counting interval affect, if not `showc`?
 - [ ] What `qrate` does the device use after power-up? (The app sets it before every acquisition.)
 - [ ] Which firmware versions are in the field?
-- [ ] A real PSAMPLE `.crv` file and a corrected TAC export.
+- [x] A real PSAMPLE `.crv` file: `tests/fixtures/psample/` (2026-10-04); the export matches it byte for byte.
+- [ ] A corrected TAC exported by PMOD, to check the `.tac` export against.
 
 ## Where the device facts live in the code
 
@@ -87,6 +88,6 @@ which the app records as connection events.
 | Field order, line ending, prompts, login, idle timeout, keepalive | constants at the top of `packages/twilite/src/twilite/protocol.py` |
 | Banner, help, error messages, `[n]` and count model | `sim/server.py`, `Counter` in `sim/scenarios.py` |
 | Report rate after power-up (not observed) | `DEFAULT_QRATE` in `sim/server.py` |
-| `.crv` layout | `CRV_DATE_FORMAT`, `CRV_TIME_FORMAT`, `export_crv` in `storage.py` |
-| Sample time in the PMOD export | `export_pmod_blood` in `storage.py` |
+| `.crv` layout | `export_crv` in `storage.py`, checked against `tests/fixtures/psample/` |
+| Sample time in the PMOD exports | `export_pmod_blood`, `export_pmod_tac` in `storage.py` |
 | Isotope values to verify | `isotopes.py` |

@@ -14,7 +14,7 @@ twilite:
   rawLog: true
 
   # true: start a simulated twilite inside the app and connect to it instead.
-  simulate: false
+  simulate: true
   simulator:
     scenario: "bolus"               # background, bolus, calibration-step, long-decay
     isotope: "F-18"
