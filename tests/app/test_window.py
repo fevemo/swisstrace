@@ -85,12 +85,15 @@ def test_connect_acquire_for_five_seconds_and_close(qtbot, window, tmp_path, mon
     # Select: a click on the plot sets the PET start, time only.
     w.petSelectButton.click()
     assert w.petSelectButton.text() == "Cancel"
-    clickAt = (tWall[-3] - h.correctionData["start"], float(np.nanmean(h.correctionData["coincidences"])))
+    # The middle of the run: the field keeps whole seconds, so the PET start may move by up to
+    # 0.5 s, and samples must stay on both sides of it.
+    middle = tWall[len(tWall) // 2]
+    clickAt = (middle - h.correctionData["start"], float(np.nanmean(h.correctionData["coincidences"])))
     scenePos = vb.mapViewToScene(QPointF(*clickAt))
     qtbot.mouseClick(w.correctionPlot.viewport(), Qt.MouseButton.LeftButton,
                      pos=w.correctionPlot.mapFromScene(scenePos))
     assert w.petSelectButton.text() == "Select"
-    assert w.petStartEdit.text() == datetime.fromtimestamp(round(tWall[-3])).strftime("%H:%M:%S")
+    assert w.petStartEdit.text() == datetime.fromtimestamp(round(middle)).strftime("%H:%M:%S")
 
     # Time 0 is now the PET start; the plot still shows the whole measurement, from below 0.
     petStart = h.correctionZero
