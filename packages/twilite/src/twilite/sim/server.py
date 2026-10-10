@@ -287,6 +287,10 @@ class TwiliteSimulator:
     async def _emit(self, writer: asyncio.StreamWriter) -> None:
         faults = self.faults
         sent = 0
+        # Report on a fixed clock, as the device does: sleeping a whole period after each
+        # line would add the loop's own time to every period and drift on a busy machine.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time()
         while True:
             line = self._next_report_line()
             if line is None:  # replay finished: stay silent
@@ -298,9 +302,15 @@ class TwiliteSimulator:
                 return
             if faults.stall_after is not None and sent == faults.stall_after + 1:
                 await asyncio.sleep(faults.stall_s)
+                deadline = loop.time()
             self._write_lines(writer, [line])
             await writer.drain()
-            await asyncio.sleep(self._report_delay())
+            delay = self._report_delay()
+            deadline += delay
+            now = loop.time()
+            if deadline < now - delay:
+                deadline = now  # more than a period behind: carry on from now, no burst
+            await asyncio.sleep(max(0.0, deadline - now))
 
     def _next_report_line(self) -> str | None:
         if isinstance(self.scenario, Replay):

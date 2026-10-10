@@ -1,5 +1,6 @@
 """The app's Model in plain Python, with the simulator: no Qt, no EINstudio."""
 
+import statistics
 import subprocess
 import sys
 import threading
@@ -62,7 +63,12 @@ def test_timed_acquisition_writes_a_file(model):
     path = model.acquire(qrate=1, endAfter_s=1.0)
     acq = read_acquisition(path)
     assert path.endswith("_twilite.csv")
-    assert 8 <= len(acq) <= 12  # one sample per 100 ms report
+    # One sample per 100 ms report. The median spacing, not the count, so that a stall of
+    # a busy CI machine (it gave 7 samples in 1 s once) does not fail the test.
+    spacing = statistics.median(b - a for a, b in zip(acq.t_rel_s, acq.t_rel_s[1:]))
+    assert spacing == pytest.approx(0.1, abs=0.03)
+    assert 5 <= len(acq) <= 12
+    assert acq.t_rel_s[-1] >= 1.0  # ran for the full time
     assert acq.index == sorted(set(acq.index))
     assert acq.metadata["report_rate"] == "qrate 1 (100 ms)"
     assert "simulator" in acq.metadata["device"]
