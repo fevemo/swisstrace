@@ -249,3 +249,47 @@ def test_settings_round_trip(model, tmp_path, monkeypatch):
     assert model.loadState() == {}
     model.saveState({"host": "10.0.0.1", "qrate": 5})
     assert model.loadState() == {"host": "10.0.0.1", "qrate": 5}
+
+
+def test_editing_the_correction_data(model, tmp_path):
+    # 5 s samples arriving at 0, 5, ... 295 s.
+    path = write_step_run(tmp_path)
+    model.loadCorrectionData(str(path))
+    start = model.correctionArrays()["start"]
+    assert model.samplingSections() == [pytest.approx((start, start + 295, 5.0))]
+
+    t, values = model.cutPreview(start + 20, start + 40, 2)
+    # The line from the edge sample before the cut to the one after it.
+    assert t - start == pytest.approx([15, 20, 25, 30, 35, 40, 45]) and values == pytest.approx([120] * 7)
+    assert not model.hasUnsavedEdits()
+    assert model.cut(start + 20, start + 40, 2)
+    assert model.correctionArrays()["interpolated"].sum() == 5 and model.hasUnsavedEdits()
+
+    sections = [(start, start + 145, 5.0), (start + 145, start + 295, 30.0)]
+    t, values, counts, problems = model.resamplePreview(sections)
+    assert counts == [30, 5] and problems == ["", ""] and len(model.correctionData) == 60  # a preview only
+    # The merged samples only, each in the middle of the reports it merges (150..175 s, ...).
+    assert t - start == pytest.approx([162.5, 192.5, 222.5, 252.5, 282.5])
+    assert model.resample(sections)
+    assert len(model.correctionData) == 35
+    assert model.resample(model.samplingSections()) is False  # nothing to change
+    # A wrong section is left out of the preview; the others are still counted.
+    _, _, counts, problems = model.resamplePreview([(start, start + 145, 10.0), (start + 145, start + 295, 45.0)])
+    assert counts == [15, None] and problems[0] == "" and "multiple of 30 s" in problems[1]
+    assert len(model.correctionData) == 35
+
+    with pytest.raises(ValueError, match="as recorded"):
+        model.saveEditedData(str(path))  # never over the original
+    edited = tmp_path / "edited.csv"
+    model.saveEditedData(str(edited))
+    assert not model.hasUnsavedEdits() and model.correctionData.path == edited
+    model.cut(start + 200, start + 260, 1)
+    model.saveEditedData(str(edited))  # an edited file may be overwritten
+
+    model.loadCorrectionData(str(edited))
+    # The cut, the resampled second section (the first keeps its sampling) and the second cut.
+    assert len(model.correctionData) == 35 and len(model.correctionData.edits) == 3
+    # The corrections use the same times: the middle of the last 30 s sample.
+    model.setCorrection("F-18", start + 100, 120.0, 1.0)
+    t, _, _ = model.correctData()
+    assert t[-1] == pytest.approx(282.5 - 100)

@@ -8,8 +8,7 @@ from twilite import Sample, get_isotope
 from twilite.correction import CorrectionSettings
 from twilite.storage import (
     Acquisition, AcquisitionWriter, export_crv, export_csv, export_events, export_pmod_blood, export_pmod_tac,
-    find_partial_files,
-    read_acquisition, recover,
+    find_partial_files, read_acquisition, recover, report_period, write_acquisition,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
@@ -103,6 +102,39 @@ def test_rows_are_flushed_before_the_file_is_closed(tmp_path):
     writer.finish()
 
 
+def test_durations_come_from_the_report_rate(tmp_path):
+    writer = AcquisitionWriter(tmp_path, {"report_rate": "qrate 5 (500 ms)"}, start_wall=T0_WALL, start_mono=T0_MONO)
+    for sample in samples(3):  # 1 s apart, but the header says 0.5 s
+        writer.write_sample(sample)
+    acq = read_acquisition(writer.finish())
+    assert acq.duration_s == [0.5, 0.5, 0.5] and acq.interpolated == [False] * 3 and acq.edits == []
+    acq.metadata.clear()
+    assert report_period(acq) == pytest.approx(1.0)  # the spacing without a header
+
+
+def test_raw_data_written_back_is_unchanged(tmp_path):
+    _, path = write(tmp_path)
+    again = write_acquisition(read_acquisition(path), tmp_path / "again.csv")
+    assert again.read_text() == path.read_text()
+
+
+def test_edited_data_round_trip(tmp_path):
+    _, path = write(tmp_path)
+    acq = read_acquisition(path)
+    acq.edits = ["cut 1 samples", "resampled, with a\nline break"]
+    acq.duration_s[1] = 2.5
+    acq.interpolated[3] = True
+    text = write_acquisition(acq, tmp_path / "edited.csv").read_text()
+    assert "# edit: cut 1 samples\n# edit: resampled, with a | line break\n" in text
+    assert "index,t_wall_iso,t_rel_s,singles1,singles2,coincidences,extra1,extra2,duration_s,interpolated" in text
+    back = read_acquisition(tmp_path / "edited.csv")
+    assert back.edits == ["cut 1 samples", "resampled, with a | line break"]
+    assert back.duration_s == [1.0, 2.5, 1.0, 1.0, 1.0]
+    assert back.interpolated == [False, False, False, True, False]
+    assert back.extras == acq.extras and back.extra_columns == ["extra1", "extra2"]
+    assert back.coincidences == acq.coincidences and "edit" not in back.metadata
+
+
 def test_names_do_not_collide(tmp_path):
     first = AcquisitionWriter(tmp_path, start_wall=T0_WALL).finish()
     second = AcquisitionWriter(tmp_path, start_wall=T0_WALL).finish()
@@ -179,9 +211,19 @@ def test_export_pmod_tac(acquisition, tmp_path):
     assert lines[0] == "start[seconds]\tend[kBq/cc]\twhole-blood"
     assert [float(v) for v in lines[1].split("\t")[:2]] == [0.0, 0.0]  # frame clipped at the PET start
     start, end, value = lines[2].split("\t")
-    assert (float(start), float(end)) == pytest.approx((0.0, 1.0), abs=0.01)  # 1 s between samples
+    assert (float(start), float(end)) == pytest.approx((0.0, 1.0), abs=0.01)  # the 1 s counting interval
     assert float(value) == pytest.approx(0.5 * 6 * 2 ** (1 / 6586.2) / 0.967, rel=1e-4)
     assert len(lines) == 6
+
+
+def test_export_pmod_tac_frames_follow_the_durations(acquisition, tmp_path):
+    acquisition.duration_s = [1.0] * 8 + [3.0, 1.0]  # sample 8 merges the reports of T0+6..T0+8 s
+    settings = CorrectionSettings(get_isotope("F-18"), pet_start=T0_WALL, background=120.0)
+    lines = export_pmod_tac(acquisition, tmp_path / "run.tac", settings).read_text().splitlines()
+    frames = [tuple(float(v) for v in line.split("\t")[:2]) for line in lines[1:]]
+    assert frames[-2:] == [(5.0, 8.0), (8.0, 9.0)]
+    bld = export_pmod_blood(acquisition, tmp_path / "run.bld", settings).read_text().splitlines()
+    assert [float(line.split("\t")[0]) for line in bld[-2:]] == [7.0, 9.0]  # the middle of a merged sample's reports
 
 
 def test_export_events(acquisition, tmp_path):

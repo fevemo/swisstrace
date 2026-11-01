@@ -164,13 +164,13 @@ def test_correction_data_signals(qtbot, viewmodel):
                            timeout=1000) as blocker:
         viewmodel.loadCorrectionData()
     data = blocker.all_signals_and_args[0].args[0]
-    assert data["name"].endswith("_twilite.csv") and len(data["t_wall"]) >= 3
+    assert data["name"].endswith("_twilite.csv") and len(data["t"]) >= 3
     assert blocker.all_signals_and_args[1].args[0] is None  # no PET start yet
 
     with qtbot.waitSignal(viewmodel.correctionComputed, timeout=1000) as computed:
-        viewmodel.setCorrection("F-18", float(data["t_wall"][1]), None, 1.0)
+        viewmodel.setCorrection("F-18", float(data["t"][1]), None, 1.0)
     t, activity, _ = computed.args[0]
-    assert len(t) == len(activity) == len(data["t_wall"]) - 1
+    assert len(t) == len(activity) == len(data["t"]) - 1
 
 
 def test_calibration_is_computed_or_says_why_not(qtbot, viewmodel, tmp_path):
@@ -196,3 +196,21 @@ def test_calibration_is_computed_or_says_why_not(qtbot, viewmodel, tmp_path):
     viewmodel.computeCalibration(*windows, 50.0, start, "F-18")
     assert results[-1] == (pytest.approx(50 * 0.967 / 1000, rel=1e-4), "")
     assert viewmodel.lastCalibrationFactor == results[-1][0]
+
+
+def test_edit_signals(qtbot, viewmodel, tmp_path):
+    viewmodel.loadCorrectionData(str(write_step_run(tmp_path)))
+    start = viewmodel.model.correctionArrays()["start"]
+    assert viewmodel.cutPreview(start + 1000, start + 2000, 1) == (None, "No samples in the selection")
+    with qtbot.waitSignal(viewmodel.errorOccurred, timeout=1000):
+        assert not viewmodel.applyCut(start + 1000, start + 2000, 1)
+
+    with qtbot.waitSignals([viewmodel.correctionDataEdited, viewmodel.correctionComputed], timeout=1000) as blocker:
+        assert viewmodel.applyCut(start + 20, start + 40, 1)
+    data = blocker.all_signals_and_args[0].args[0]
+    assert data["unsaved"] and data["interpolated"].sum() == 5
+    assert viewmodel.hasUnsavedEdits()
+
+    with qtbot.waitSignal(viewmodel.correctionDataEdited, timeout=1000) as saved:
+        assert viewmodel.saveEditedData(str(tmp_path / "edited.csv"))
+    assert saved.args[0]["name"] == "edited.csv" and not saved.args[0]["unsaved"]

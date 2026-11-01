@@ -43,8 +43,11 @@ class ViewModel(QObject):
     calibrationRunLoaded = pyqtSignal(object, object, str)
     # (CF, "") when it can be computed, else (None, why not).
     calibrationComputed = pyqtSignal(object, str)
-    # The data loaded on the Correction page: {"name", "t_wall", "coincidences", "start"}.
+    # The data loaded on the Correction page: {"name", "unsaved", "t", "coincidences",
+    # "interpolated", "start"}; "unsaved" is True while there are edits not saved yet.
     correctionDataLoaded = pyqtSignal(object)
+    # The same, after an edit (cut, resample) or after saving the edited data.
+    correctionDataEdited = pyqtSignal(object)
     # (t from the PET start, kBq/cc, background) of the loaded data, or None while it cannot be corrected.
     correctionComputed = pyqtSignal(object)
     # The settings of the last session.
@@ -213,14 +216,16 @@ class ViewModel(QObject):
             self.errorOccurred.emit("No acquisition yet: run one or load a file.")
             return
         try:
-            t_wall, coincidences = self.model.loadCorrectionData(path)
+            self.model.loadCorrectionData(path)
         except (OSError, ValueError) as error:
             self.errorOccurred.emit(f"Cannot load the data: {error}")
             return
-        acq = self.model.correctionData
-        self.correctionDataLoaded.emit({"name": os.path.basename(path), "t_wall": t_wall,
-                                        "coincidences": coincidences, "start": acq.t_wall[0] - acq.t_rel_s[0]})
+        self.correctionDataLoaded.emit(self._correctionData())
         self._computeCorrection()
+
+    def _correctionData(self):
+        return {"name": self.model.correctionData.path.name, "unsaved": self.model.hasUnsavedEdits(),
+                **self.model.correctionArrays()}
 
     def measuredBackground(self, petStart):
         """Mean rate before ``petStart`` of the loaded data, as "Mean before PET" would use; or None."""
@@ -285,6 +290,70 @@ class ViewModel(QObject):
                 reason = str(error)
         self.lastCalibrationFactor = cf
         self.calibrationComputed.emit(cf, reason)
+
+    ###########################################################################
+    # Editing the correction data                                             #
+    ###########################################################################
+
+    def cutPreview(self, start, end, nAverage):
+        """``((t, coincidences), "")`` of the line a cut would draw, or ``(None, why not)``."""
+        try:
+            return self.model.cutPreview(start, end, nAverage), ""
+        except ValueError as error:
+            return None, str(error)
+
+    def applyCut(self, start, end, nAverage):
+        """Cut ``[start, end]`` (PC times) out of the correction data; None if it cannot be."""
+        return self._edit(self.model.cut, start, end, nAverage)
+
+    def samplingSections(self):
+        """``[(start, end, period)]`` of the correction data, PC times; ``[]`` without data."""
+        try:
+            return self.model.samplingSections()
+        except ValueError:
+            return []
+
+    def resamplePreview(self, sections):
+        """``((t, coincidences, samples per section, problems), "")``, or ``(None, why not)``.
+
+        See ``Model.resamplePreview``.
+        """
+        try:
+            return self.model.resamplePreview(sections), ""
+        except ValueError as error:
+            return None, str(error)
+
+    def applyResample(self, sections):
+        """Resample the correction data; ``sections`` is ``[(start, end, period)]``.
+
+        True if the data changed, False if nothing would change, None if it cannot be done.
+        """
+        return self._edit(self.model.resample, sections)
+
+    def hasUnsavedEdits(self):
+        return self.model.hasUnsavedEdits()
+
+    def saveEditedData(self, path):
+        """Save the edited data as a new acquisition file; False if it could not be."""
+        try:
+            self.model.saveEditedData(path)
+        except (OSError, ValueError) as error:
+            self.errorOccurred.emit(f"Cannot save the edited data: {error}")
+            return False
+        self.correctionDataEdited.emit(self._correctionData())
+        return True
+
+    def _edit(self, func, *args):
+        try:
+            changed = func(*args)
+        except ValueError as error:
+            self.errorOccurred.emit(str(error))
+            return None
+        if not changed:
+            return False
+        self.correctionDataEdited.emit(self._correctionData())
+        self._computeCorrection()
+        return True
 
     ###########################################################################
     # Files                                                                   #

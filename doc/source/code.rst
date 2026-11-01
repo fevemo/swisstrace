@@ -7,7 +7,8 @@ The repository is a uv workspace with two parts. Only the app depends on Qt.
     The driver, with no Qt and no dependencies outside the standard library.
     ``protocol.py`` holds the device facts and parses lines, ``driver.py`` holds
     ``TwiliteClient``, ``storage.py`` writes, recovers and exports acquisition files,
-    ``correction.py`` and ``isotopes.py`` do the correction maths. ``twilite.sim`` is
+    ``correction.py`` and ``isotopes.py`` do the correction maths, ``editing.py`` cuts
+    and resamples acquisitions (returning new ones). ``twilite.sim`` is
     a simulated twilite speaking the same protocol: run ``python -m twilite.sim --help``.
 
 ``apps/twiliteacq``
@@ -26,7 +27,9 @@ The repository is a uv workspace with two parts. Only the app depends on Qt.
 
     ``view.py``
         Wires the controls to the ViewModel and its signals to the plots and labels;
-        saves the settings and disconnects when the window closes.
+        saves the settings and disconnects when the window closes. It also holds the
+        cut mode (a drag on the plot selects samples) and ``ResampleDialog``, the
+        window listing the resampling sections.
 
     ``layouts/mainLayout.py``
         Builds the *Acquisition*, *Correction*, *Calibration* and *Docs* pages.

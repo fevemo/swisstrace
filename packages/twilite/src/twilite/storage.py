@@ -5,6 +5,11 @@ at the top) and the events (``# event,<time>,<t_rel>,<kind>,<text>``, anywhere).
 file is called ``*.partial.csv`` while it is being written and renamed to ``*.csv``
 when the acquisition ends cleanly. Raw counts are never changed: corrected values
 only exist in exports.
+
+Edited data (see :mod:`twilite.editing`) is saved with :func:`write_acquisition` to a
+new file in the same format, with one ``# edit: ...`` line per edit and two more
+columns: ``duration_s`` (each sample's counting interval, which ends at its time stamp)
+and ``interpolated`` (1 for a value replaced by a cut).
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import csv
 import io
 import math
 import os
+import re
 import statistics
 import threading
 import time
@@ -26,7 +32,11 @@ from twilite.sample import Sample
 PARTIAL_SUFFIX = ".partial.csv"
 FINAL_SUFFIX = ".csv"
 COLUMNS = ("index", "t_wall_iso", "t_rel_s", "singles1", "singles2", "coincidences")
+#: Columns after the extras, in edited files only.
+EDIT_COLUMNS = ("duration_s", "interpolated")
 EVENT_PREFIX = "# event,"
+#: Header key of the edit lines; there may be several.
+EDIT_KEY = "edit"
 
 
 def _iso(t_wall: float) -> str:
@@ -172,7 +182,12 @@ def _unique(path: Path) -> Path:
 
 @dataclass(slots=True)
 class Acquisition:
-    """An acquisition read back from its CSV file."""
+    """An acquisition read back from its CSV file.
+
+    Sample ``i`` counts over ``[t_wall[i] - duration_s[i], t_wall[i]]``: the report
+    arrives at the end of its counting interval. :func:`read_acquisition` fills
+    ``duration_s`` from the report rate when the file has no such column.
+    """
 
     path: Path
     metadata: dict[str, str] = field(default_factory=dict)
@@ -186,6 +201,10 @@ class Acquisition:
     extra_columns: list[str] = field(default_factory=list)
     events: list[EventRecord] = field(default_factory=list)
     skipped_lines: int = 0
+    duration_s: list[float] = field(default_factory=list)
+    interpolated: list[bool] = field(default_factory=list)
+    #: One line per edit, oldest first; empty for an acquisition as recorded.
+    edits: list[str] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.index)
@@ -194,7 +213,7 @@ class Acquisition:
 def read_acquisition(path: str | Path) -> Acquisition:
     """Read an acquisition file, skipping lines that do not parse (a half-written end)."""
     acq = Acquisition(Path(path))
-    header_done = False
+    columns: list[str] | None = None
     with open(path, newline="", encoding="utf-8") as file:
         for line in file:
             if not line.endswith("\n"):
@@ -209,25 +228,36 @@ def read_acquisition(path: str | Path) -> Acquisition:
                     acq.skipped_lines += 1
             elif line.startswith("#"):
                 key, _, value = line[1:].partition(":")
-                acq.metadata[key.strip()] = value.strip()
-            elif not header_done:
+                if key.strip() == EDIT_KEY:
+                    acq.edits.append(value.strip())
+                else:
+                    acq.metadata[key.strip()] = value.strip()
+            elif columns is None:
                 columns = next(csv.reader([line]))
-                acq.extra_columns = columns[len(COLUMNS):]
-                header_done = True
+                acq.extra_columns = [c for c in columns[len(COLUMNS):] if c not in EDIT_COLUMNS]
             elif line:
                 try:
-                    _append_row(acq, next(csv.reader([line])))
+                    _append_row(acq, columns, next(csv.reader([line])))
                 except (ValueError, IndexError):
                     acq.skipped_lines += 1
+    if len(acq.duration_s) != len(acq):
+        acq.duration_s = [report_period(acq)] * len(acq)
+    if len(acq.interpolated) != len(acq):
+        acq.interpolated = [False] * len(acq)
     return acq
 
 
-def _append_row(acq: Acquisition, row: list[str]) -> None:
+def _append_row(acq: Acquisition, columns: list[str], row: list[str]) -> None:
     if len(row) < len(COLUMNS):
         raise ValueError("short row")
     index, stamp, t_rel = int(row[0]), _from_iso(row[1]), float(row[2])
     s1, s2, c = (_number(v) for v in row[3:6])
-    extras = tuple(_number(v) for v in row[6:] if v != "")
+    named = dict(zip(columns, row))
+    extras = tuple(_number(named[name]) for name in acq.extra_columns if named.get(name, "") != "")
+    if "duration_s" in named:
+        acq.duration_s.append(float(named["duration_s"]))
+    if "interpolated" in named:
+        acq.interpolated.append(named["interpolated"] == "1")
     acq.index.append(index)
     acq.t_wall.append(stamp)
     acq.t_rel_s.append(t_rel)
@@ -242,6 +272,75 @@ def _number(text: str) -> float:
         return int(text)
     except ValueError:
         return float(text)
+
+
+def report_period(acq: Acquisition) -> float:
+    """The device's report period in seconds: from the ``report_rate`` header (``qrate n``
+    reports every n x 100 ms), else the median spacing of the samples, else 1 s."""
+    match = re.match(r"qrate (\d+)", acq.metadata.get("report_rate", ""))
+    if match:
+        return int(match.group(1)) / 10
+    if len(acq.t_wall) >= 2:
+        return statistics.median(b - a for a, b in zip(acq.t_wall, acq.t_wall[1:]))
+    return 1.0
+
+
+def sample_durations(acq: Acquisition) -> list[float]:
+    """Each sample's counting interval: ``acq.duration_s``, or the report period for an
+    :class:`Acquisition` built without durations."""
+    if len(acq.duration_s) == len(acq):
+        return acq.duration_s
+    return [report_period(acq)] * len(acq)
+
+
+def sample_times(acq: Acquisition) -> list[float]:
+    """PC time each sample's rate is plotted and corrected at, seconds since the epoch.
+
+    A sample as recorded is at the time its report arrived, as in PSAMPLE. A resampled
+    sample, longer than the report period, is in the middle of the reports it merges:
+    ``t_wall - (duration - report period) / 2``.
+    """
+    period = report_period(acq)
+    return [t - max(d - period, 0.0) / 2 for t, d in zip(acq.t_wall, sample_durations(acq))]
+
+
+def write_acquisition(acq: Acquisition, path: str | Path) -> Path:
+    """Write ``acq`` in the format :func:`read_acquisition` reads; return the path.
+
+    The edit lines and the edit columns are only written for edited data, so an
+    acquisition as recorded is written as the device's file was.
+    """
+    path = Path(path)
+    edited = bool(acq.edits)
+    durations = sample_durations(acq)
+    with open(path, "w", newline="", encoding="utf-8") as file:
+        for key, value in acq.metadata.items():
+            file.write(f"# {key}: {value}\n")
+        for edit in acq.edits:
+            file.write(f"# {EDIT_KEY}: {_one_line(edit)}\n")
+        writer = csv.writer(file, lineterminator="\n")
+        writer.writerow([*COLUMNS, *acq.extra_columns, *(EDIT_COLUMNS if edited else ())])
+        for i in range(len(acq)):
+            row = [acq.index[i], _iso(acq.t_wall[i]), f"{acq.t_rel_s[i]:.3f}",
+                   acq.singles1[i], acq.singles2[i], acq.coincidences[i], *_extras(acq, i)]
+            if edited:
+                row += [f"{durations[i]:.3f}", int(bool(acq.interpolated and acq.interpolated[i]))]
+            writer.writerow(row)
+        for event in acq.events:
+            buffer = io.StringIO()
+            csv.writer(buffer, lineterminator="\n").writerow(
+                [_iso(event.t_wall), f"{event.t_rel_s:.3f}", event.kind, event.text])
+            file.write(EVENT_PREFIX + buffer.getvalue())
+        file.flush()
+        os.fsync(file.fileno())
+    return path
+
+
+def _extras(acq: Acquisition, i: int) -> list:
+    """Sample ``i``'s extras, one per extra column: cut or padded with empty cells."""
+    n = len(acq.extra_columns)
+    extras = list(acq.extras[i][:n]) if acq.extras else []
+    return extras + [""] * (n - len(extras))
 
 
 def find_partial_files(directory: str | Path) -> list[Path]:
@@ -262,24 +361,9 @@ def recover(path: str | Path) -> Path:
     acq = read_acquisition(path)
     final = _unique(path.with_name(path.name.removesuffix(PARTIAL_SUFFIX) + FINAL_SUFFIX))
     tmp = final.with_name(final.name + ".tmp")
-    with open(tmp, "w", newline="", encoding="utf-8") as file:
-        for key, value in acq.metadata.items():
-            file.write(f"# {key}: {value}\n")
-        file.write(f"# recovered: {_iso(time.time())}, {len(acq)} samples kept, "
-                   f"{acq.skipped_lines} lines dropped\n")
-        writer = csv.writer(file, lineterminator="\n")
-        writer.writerow([*COLUMNS, *acq.extra_columns])
-        for i in range(len(acq)):
-            extras = list(acq.extras[i]) + [""] * (len(acq.extra_columns) - len(acq.extras[i]))
-            writer.writerow([acq.index[i], _iso(acq.t_wall[i]), f"{acq.t_rel_s[i]:.3f}",
-                             acq.singles1[i], acq.singles2[i], acq.coincidences[i], *extras])
-        for event in acq.events:
-            buffer = io.StringIO()
-            csv.writer(buffer, lineterminator="\n").writerow(
-                [_iso(event.t_wall), f"{event.t_rel_s:.3f}", event.kind, event.text])
-            file.write(EVENT_PREFIX + buffer.getvalue())
-        file.flush()
-        os.fsync(file.fileno())
+    acq.metadata["recovered"] = (f"{_iso(time.time())}, {len(acq)} samples kept, "
+                                 f"{acq.skipped_lines} lines dropped")
+    write_acquisition(acq, tmp)
     os.replace(tmp, final)
     path.unlink()
     return final
@@ -294,30 +378,39 @@ CRV_LINE_END = "\n"
 
 
 def export_csv(acq: Acquisition, path: str | Path, settings: CorrectionSettings | None = None) -> Path:
-    """Write raw counts plus, with ``settings``, time from PET start and corrected values."""
+    """Write raw counts plus, with ``settings``, time from PET start and corrected values.
+
+    Edited data keeps its ``duration_s`` and ``interpolated`` columns.
+    """
     path = Path(path)
     corrected: dict[int, float] = {}
     header = dict(acq.metadata)
+    edited = bool(acq.edits)
+    durations = sample_durations(acq)
+    times = sample_times(acq)
     if settings is not None:
-        t_pet = [t - settings.pet_start for t in acq.t_wall]
-        _, values, background = apply(settings, acq.t_wall, acq.coincidences)
+        t_pet = [t - settings.pet_start for t in times]
+        _, values, background = apply(settings, times, acq.coincidences)
         kept = [i for i, t in enumerate(t_pet) if t >= 0]
         corrected = dict(zip(kept, values))
         header.update(_settings_header(settings, background))
     with open(path, "w", newline="", encoding="utf-8") as file:
         for key, value in header.items():
             file.write(f"# {key}: {value}\n")
+        for edit in acq.edits:
+            file.write(f"# {EDIT_KEY}: {_one_line(edit)}\n")
         writer = csv.writer(file, lineterminator="\n")
-        columns = [*COLUMNS, *acq.extra_columns]
+        columns = [*COLUMNS, *acq.extra_columns, *(EDIT_COLUMNS if edited else ())]
         if settings is not None:
             columns += ["t_pet_s", "activity_kBq_cc"]
         writer.writerow(columns)
         for i in range(len(acq)):
             row = [acq.index[i], _iso(acq.t_wall[i]), f"{acq.t_rel_s[i]:.3f}",
-                   acq.singles1[i], acq.singles2[i], acq.coincidences[i], *acq.extras[i]]
-            row += [""] * (len(COLUMNS) + len(acq.extra_columns) - len(row))
+                   acq.singles1[i], acq.singles2[i], acq.coincidences[i], *_extras(acq, i)]
+            if edited:
+                row += [f"{durations[i]:.3f}", int(bool(acq.interpolated and acq.interpolated[i]))]
             if settings is not None:
-                row.append(f"{acq.t_wall[i] - settings.pet_start:.3f}")
+                row.append(f"{t_pet[i]:.3f}")
                 row.append(f"{corrected[i]:.6g}" if i in corrected else "")
             writer.writerow(row)
     return path
@@ -352,12 +445,11 @@ def _crv_count(value: float) -> str:
 def export_pmod_blood(acq: Acquisition, path: str | Path, settings: CorrectionSettings) -> Path:
     """Write the corrected TAC in PMOD's two-column blood format (seconds, kBq/cc).
 
-    PROVISIONAL: the sample time is the time the report arrived; whether it should be
-    moved to the middle of the counting interval depends on the open protocol
-    questions.
+    PROVISIONAL: the sample times are those of :func:`sample_times`: when the report
+    arrived, as in PSAMPLE, or the middle of a resampled sample.
     """
     path = Path(path)
-    t_out, values, _ = apply(settings, acq.t_wall, acq.coincidences)
+    t_out, values, _ = apply(settings, sample_times(acq), acq.coincidences)
     with open(path, "w", newline="", encoding="latin-1") as file:
         file.write("sample-time[seconds]\twhole-blood[kBq/cc]\r\n")
         for t, value in zip(t_out, values):
@@ -366,27 +458,26 @@ def export_pmod_blood(acq: Acquisition, path: str | Path, settings: CorrectionSe
     return path
 
 
-def export_pmod_tac(acq: Acquisition, path: str | Path, settings: CorrectionSettings,
-                    frame_s: float | None = None) -> Path:
+def export_pmod_tac(acq: Acquisition, path: str | Path, settings: CorrectionSettings) -> Path:
     """Write the corrected TAC in PMOD's frame format (start and end in seconds, kBq/cc).
 
-    Each sample covers the counting window that ends when its report arrived, so its
-    frame is ``[t - frame_s, t]``, with ``frame_s`` the report period (the median spacing
-    of the samples when not given). A frame starting before the PET start is clipped at 0.
+    Each sample's frame is its counting interval, which ends when its report arrived;
+    after resampling the frames differ in length. A frame starting before the PET start
+    is clipped at 0.
 
     PROVISIONAL until compared with a TAC exported by PMOD.
     """
     path = Path(path)
-    if frame_s is None:
-        if len(acq) < 2:
-            raise ValueError("A TAC needs at least two samples to know the frame length")
-        frame_s = statistics.median(b - a for a, b in zip(acq.t_wall, acq.t_wall[1:]))
-    t_out, values, _ = apply(settings, acq.t_wall, acq.coincidences)
+    durations = sample_durations(acq)
+    times = sample_times(acq)
+    kept = [i for i, t in enumerate(times) if t >= settings.pet_start]
+    _, values, _ = apply(settings, times, acq.coincidences)
     with open(path, "w", newline="", encoding="latin-1") as file:
         file.write("start[seconds]\tend[kBq/cc]\twhole-blood\r\n")
-        for t, value in zip(t_out, values):
+        for i, value in zip(kept, values):
             if not math.isnan(value):
-                file.write(f"{max(t - frame_s, 0.0):.1f}\t{t:.1f}\t{value:.6g}\r\n")
+                end = acq.t_wall[i] - settings.pet_start
+                file.write(f"{max(end - durations[i], 0.0):.1f}\t{end:.1f}\t{value:.6g}\r\n")
     return path
 
 

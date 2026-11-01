@@ -1,17 +1,21 @@
+import math
 import os
 import time
 from datetime import datetime, timedelta
 
+import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtWidgets import QFileDialog
-from qfluentwidgets import InfoBar, InfoBarPosition, MessageBox
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtWidgets import QAbstractItemView, QFileDialog, QHeaderView, QTableWidgetItem, QWidget
+from qfluentwidgets import InfoBar, InfoBarPosition, MessageBox, PushButton, TableWidget
 
 from einstudio.tools.einview import EINview
 from einstudio.tools.styleengine import StyleEngine
 from einstudio.widgets import (
-    EINbodyLabel, EINbutton, EINcaptionLabel, EINcheckBox, EINdocWidget, EINdoubleSpinBox, EINdropDown,
-    EINlineEdit, EINlogDisplayWidget, EINoptionRow, EINplotWidget, EINspinBox, EINstatusLight, EINtitleLabel,
+    EINbodyLabel, EINbutton, EINcaptionLabel, EINcheckBox, EINdialog, EINdocWidget, EINdoubleSpinBox, EINdropDown,
+    EINhBoxLayout, EINlineEdit, EINlogDisplayWidget, EINoptionRow, EINplotWidget, EINspinBox, EINstatusLight,
+    EINtitleLabel, EINvBoxLayout,
 )
 
 CUSTOM_ISOTOPE = "Custom"
@@ -24,11 +28,19 @@ STATUS_LIGHTS = {"disconnected": "off", "connecting": "processing", "connected":
 LEGEND_INSET_PX = 10
 # Background windows on the Calibration and Correction plots.
 BACKGROUND_BRUSH = (128, 128, 128, 50)
+# The samples selected for a cut (c_plot_curve_5, translucent).
+CUT_BRUSH = (243, 218, 114, 40)
+# Opacity of the error colour behind a resample section that cannot be applied.
+ERROR_ROW_ALPHA = 90
+# Marker size of the samples while editing, in pixels.
+SAMPLE_MARKER_PX = 5
 # Save dialogs: (export kind, file filter, suffix added to the acquisition's name).
 RAW_FORMATS = [("csv", "CSV (*.csv)", "_raw.csv"), ("crv", "Curve (*.crv)", ".crv")]
 EVENT_FORMATS = [("events", "CSV (*.csv)", "_events.csv")]
 CORRECTED_FORMATS = [("bld", "PMOD blood (*.bld)", ".bld"), ("tac", "PMOD TAC (*.tac)", ".tac"),
                      ("csv", "CSV with corrected values (*.csv)", "_corrected.csv")]
+EDITED_FORMATS = [("csv", "Acquisitions (*.csv)", "_edited.csv")]
+EDITED_SUFFIX = "_edited"
 
 
 class View(EINview):
@@ -67,12 +79,17 @@ class View(EINview):
             ('backgroundModeDropdown', EINdropDown),
             ('backgroundSpin',        EINdoubleSpinBox),
             ('cfSpin',                EINdoubleSpinBox),
-            ('applyCorrectionButton', EINbutton),
             ('saveCorrectedButton',   EINbutton),
             ('correctionFileLabel',   EINcaptionLabel),
             ('useCurrentDataButton',  EINbutton),
             ('loadCorrectionDataButton', EINbutton),
             ('correctionPlot',        EINplotWidget),
+            ('cutButton',             EINbutton),
+            ('resampleButton',        EINbutton),
+            ('saveEditedButton',      EINbutton),
+            ('cutRow',                EINoptionRow),
+            ('cutAverageSpin',        EINspinBox),
+            ('applyCutButton',        EINbutton),
             # Calibration page
             ('calibrationFileLabel',  EINcaptionLabel),
             ('useCurrentCalibrationButton', EINbutton),
@@ -118,6 +135,10 @@ class View(EINview):
         self._onIsotopeChanged()
         w.backgroundSpin.setEnabled(False)
         w.cfSpin.setValue(1.0)
+        w.cutRow.setVisible(False)
+        w.cutAverageSpin.setValue(1)
+        for button in (w.cutButton, w.resampleButton, w.saveEditedButton):
+            button.setEnabled(False)
 
         # Live plot: one curve per series; NaN points (lost connections) break the line.
         plot = w.plotWidget
@@ -166,13 +187,19 @@ class View(EINview):
         # Before the edited handler below, so the field is updated when the plot is redrawn.
         w.backgroundModeDropdown.currentIndexChanged.connect(self._onBackgroundModeChanged)
         w.backgroundSpin.valueChanged.connect(self._onBackgroundValueChanged)
-        w.applyCorrectionButton.clicked.connect(self._applyCorrection)
         w.saveRawButton.clicked.connect(lambda: self._onSaveRaw("Save raw data", RAW_FORMATS))
         w.saveEventsButton.clicked.connect(lambda: self._onSaveRaw("Save events", EVENT_FORMATS))
         w.saveCorrectedButton.clicked.connect(self._onSaveCorrected)
-        w.useCurrentDataButton.clicked.connect(lambda: self.viewModel.loadCorrectionData())
+        w.useCurrentDataButton.clicked.connect(self._onUseCurrentData)
         w.loadCorrectionDataButton.clicked.connect(self._onLoadCorrectionData)
-        # Any change to the settings makes the corrected curve stale until the next Apply.
+        w.cutButton.clicked.connect(self._onCutClicked)
+        w.cutAverageSpin.valueChanged.connect(self._updateCutPreview)
+        w.applyCutButton.clicked.connect(self._applyCut)
+        w.resampleButton.clicked.connect(self._onResamplingClicked)
+        w.saveEditedButton.clicked.connect(self._onSaveEdited)
+        self.handles.cutRegion.sigRegionChanged.connect(self._updateCutPreview)
+        self.handles.cutRegion.sigRegionChangeFinished.connect(self._snapCutRegion)
+        # Any change to the settings redraws the plot and corrects the data again.
         for signal in (w.isotopeDropdown.currentTextChanged, w.halfLifeSpin.valueChanged,
                        w.branchingSpin.valueChanged, w.petStartEdit.textChanged,
                        w.backgroundModeDropdown.currentIndexChanged, w.backgroundSpin.valueChanged,
@@ -206,6 +233,7 @@ class View(EINview):
         vm.partialFilesFound.connect(self._onPartialFilesFound)
         vm.calibrationRunLoaded.connect(self._onCalibrationRunLoaded)
         vm.correctionDataLoaded.connect(self._onCorrectionDataLoaded)
+        vm.correctionDataEdited.connect(self._onCorrectionDataEdited)
         vm.correctionComputed.connect(self._onCorrectionComputed)
         vm.calibrationComputed.connect(self._onCalibrationComputed)
         vm.stateRestored.connect(self._onStateRestored)
@@ -309,6 +337,14 @@ class View(EINview):
         plot.showGrid(x=True, y=True)
 
         correctedView = pg.ViewBox()
+        # Above the main view, so the corrected curve shows over the coincidences, but
+        # deaf to the mouse: panning, zooming and selecting stay with the main view.
+        correctedView.setZValue(1)
+        correctedView.setMouseEnabled(False, False)
+        correctedView.setMenuEnabled(False)
+        correctedView.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        # A ViewBox takes every drag, enabled or not: let them through to the main view.
+        correctedView.mouseDragEvent = lambda event, axis=None: event.ignore()
         item.showAxis("right")
         item.scene().addItem(correctedView)
         item.getAxis("right").linkToView(correctedView)
@@ -327,7 +363,14 @@ class View(EINview):
         # Only the main view sets the x range (shared through the link), never the corrected curve.
         correctedView.enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
         self.handles.correctedView = correctedView
-        _toTopLeft(plot.addLegend(["Coincidences"])).addItem(self.handles.correctedCurve, "Corrected")
+        # Panning and zooming in y move the corrected axis along with the coincidences'.
+        self.handles.mainYRange = item.vb.viewRange()[1]
+        item.vb.sigYRangeChanged.connect(self._followYRange)
+        # In the corrected view, so the corrected curve does not cover it.
+        legend = plot.addLegend(["Coincidences"])
+        legend.setParentItem(correctedView)
+        legend.setZValue(1)
+        _toTopLeft(legend).addItem(self.handles.correctedCurve, "Corrected")
 
         self.handles.petStartLine = pg.InfiniteLine(pos=0, angle=90, movable=False, label="PET start",
                                                     labelOpts={"position": 0.9, "rotateAxis": (1, 0)})
@@ -341,6 +384,28 @@ class View(EINview):
                         self.handles.backgroundLine):
             overlay.setVisible(False)
             plot.addItem(overlay)
+
+        # Editing: the samples selected for a cut, and previews of a cut and of a resampling.
+        self.handles.cutRegion = pg.LinearRegionItem(brush=pg.mkBrush(*CUT_BRUSH))
+        self.handles.cutRegion.setVisible(False)
+        plot.addItem(self.handles.cutRegion)
+        self.handles.cutSelectedPoints = pg.ScatterPlotItem(
+            size=SAMPLE_MARKER_PX + 2, pen=None, brush=pg.mkBrush(StyleEngine.token("c_plot_curve_5")))
+        plot.addItem(self.handles.cutSelectedPoints)
+        # Twice as thick as the data, so a preview stands out on a noisy curve.
+        previewPen = pg.mkPen(StyleEngine.token("c_plot_curve_4"), width=2 * StyleEngine.px("plot_line_width_px"),
+                              style=Qt.PenStyle.DashLine)
+        self.handles.cutPreviewCurve, self.handles.resamplePreviewCurve = (
+            plot.plot([], [], pen=previewPen, connect="finite", symbol="o", symbolSize=SAMPLE_MARKER_PX + 2,
+                      symbolPen=pg.mkPen(StyleEngine.token("c_plot_curve_4")), symbolBrush=None)
+            for _ in range(2))
+        self.handles.sectionLines = []
+        self.handles.cutting = False
+        self.handles.resampleDialog = None
+        # In cut mode a left drag selects samples instead of panning.
+        self.handles.dragPlot = item.vb.mouseDragEvent
+        item.vb.mouseDragEvent = self._onCorrectionPlotDragged
+
         self.handles.correctionData = None
         # Wall time of x = 0 on the plot: the PET start, or the acquisition start without one.
         self.handles.correctionZero = None
@@ -348,19 +413,49 @@ class View(EINview):
         # The "Fixed value" background, kept while the field shows the measured mean.
         self.handles.fixedBackground = 0.0
 
+    def _onUseCurrentData(self):
+        if self._confirmDiscardEdits("Load the current acquisition"):
+            self.viewModel.loadCorrectionData()
+
     def _onLoadCorrectionData(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Load an acquisition", self.viewModel.dataDir(),
+        if not self._confirmDiscardEdits("Load another file"):
+            return
+        source = self.viewModel.correctionSource()
+        path, _ = QFileDialog.getOpenFileName(self, "Load an acquisition",
+                                              os.path.dirname(source) if source else self.viewModel.dataDir(),
                                               "Acquisitions (*.csv)")
         if path:
             self.viewModel.loadCorrectionData(path)
 
     def _onCorrectionDataLoaded(self, data):
+        self._endCutMode()
+        if self.handles.resampleDialog is not None:
+            self.handles.resampleDialog.close()
         self.handles.correctionData = data
         self.handles.correctionZero = None  # show the whole measurement
-        self.widgets.correctionFileLabel.setText(data["name"])
+        self._showDataName(data)
         self._refreshCorrectionPlot()
         # The PET start's date comes from the data: apply again with the new data's date.
         self._applyCorrection()
+
+    def _onCorrectionDataEdited(self, data):
+        self.handles.correctionData = data
+        self._showDataName(data)
+        self._refreshCorrectionPlot()  # the same time 0, so the zoom stays
+
+    def _showDataName(self, data):
+        w = self.widgets
+        w.correctionFileLabel.setText(data["name"])
+        w.saveEditedButton.setEnabled(data["unsaved"])
+        w.cutButton.setEnabled(self.handles.resampleDialog is None or not self.handles.resampleDialog.isVisible())
+        w.resampleButton.setEnabled(not self.handles.cutting)
+
+    def _confirmDiscardEdits(self, action):
+        """True if there are no unsaved edits, or the user agrees to lose them."""
+        if not self.viewModel.hasUnsavedEdits():
+            return True
+        box = MessageBox("Unsaved edits", f"The edited data has not been saved. {action} and lose the edits?", self)
+        return bool(box.exec())
 
     def _onCorrectionComputed(self, result):
         if result is None:
@@ -369,14 +464,33 @@ class View(EINview):
         t, activity, _ = result
         self.handles.correctedCurve.setData(t, activity)
 
+    def _followYRange(self, vb, yRange):
+        """Pan and zoom the corrected axis as the coincidence axis was: the same shift and
+        scale, relative to each axis's range. While the coincidences fit their range to
+        the data, the corrected curve fits its own."""
+        h = self.handles
+        (a0, b0), (a1, b1) = h.mainYRange, yRange
+        h.mainYRange = list(yRange)
+        if vb.autoRangeEnabled()[1]:
+            h.correctedView.enableAutoRange(axis=pg.ViewBox.YAxis)
+            return
+        if b0 == a0:
+            return
+        c0, d0 = h.correctedView.viewRange()[1]
+        scale = (d0 - c0) / (b0 - a0)
+        h.correctedView.setYRange(c0 + (a1 - a0) * scale, d0 + (b1 - b0) * scale, padding=0)
+
     def _onCorrectionEdited(self, *_):
-        self.handles.correctedCurve.setData([], [])
         self._refreshCorrectionPlot()
+        # Quietly: a PET start being typed is not a time yet.
+        self._applyCorrection(quiet=True)
 
     def _refreshCorrectionPlot(self):
         """Redraw the raw curve and the overlays from the settings as they are on screen.
 
         Time 0 is the PET start, or the acquisition start while the PET start is not set.
+        Each sample is drawn at its time (when its report arrived, or the middle of a
+        resampled sample), the time the correction uses.
         """
         w = self.widgets
         petStart = self._petStart()
@@ -385,10 +499,14 @@ class View(EINview):
         if data is None:
             return
         zero = petStart if petStart is not None else data["start"]
-        x = data["t_wall"] - zero
+        x = data["t"] - zero
         self.handles.rawCurve.setData(x, data["coincidences"])
         if zero != self.handles.correctionZero and x.size > 0:
             # A new time 0: show the whole measurement again, from its start to its end.
+            if self.handles.correctionZero is not None:
+                # The cut selection stays on the same samples.
+                shift = self.handles.correctionZero - zero
+                self.handles.cutRegion.setRegion([edge + shift for edge in self.handles.cutRegion.getRegion()])
             self.handles.correctionZero = zero
             vb = w.correctionPlot.plotItem.vb
             vb.setXRange(float(x[0]), float(x[-1]), padding=0)
@@ -406,6 +524,11 @@ class View(EINview):
         if measured:
             self.handles.correctionBackgroundRegion.setRegion((float(x[0]), 0.0))
 
+        # The previews follow the data and its time 0.
+        self._updateCutPreview()
+        if self._resampling():
+            self.handles.resampleDialog.refresh()
+
     def _petStart(self):
         """The PET scan start in seconds since the epoch, on the loaded data's day; None if unset or invalid."""
         data = self.handles.correctionData
@@ -418,6 +541,7 @@ class View(EINview):
         if self.handles.correctionData is None:
             self._notify("error", "No data", "Load the data to correct first.")
             return
+        self._endCutMode()
         self.handles.selectingPetStart = True
         self.widgets.petSelectButton.setText("Cancel")
         self.widgets.correctionPlot.setCursor(Qt.CursorShape.CrossCursor)
@@ -474,13 +598,19 @@ class View(EINview):
             w.branchingSpin.setValue(branchingRatio)
         w.calibrationIsotopeLabel.setText(name)
 
-    def _applyCorrection(self):
-        """Send the correction settings to the ViewModel; False if the PET start does not parse."""
+    def _applyCorrection(self, quiet=False):
+        """Send the correction settings to the ViewModel; False if the PET start does not parse.
+
+        With ``quiet``, an unparsable PET start only removes the corrected curve.
+        """
         w = self.widgets
         text = w.petStartEdit.text().strip()
         petStart = self._petStart()
         if text and petStart is None:
-            self._notify("error", "Invalid time", f"PET scan start: expected HH:MM:SS, got {text!r}")
+            if quiet:
+                self.handles.correctedCurve.setData([], [])
+            else:
+                self._notify("error", "Invalid time", f"PET scan start: expected HH:MM:SS, got {text!r}")
             return False
         name = w.isotopeDropdown.currentText()
         custom = name == CUSTOM_ISOTOPE
@@ -540,6 +670,212 @@ class View(EINview):
                          "Every complete sample is kept.", self)
         if box.exec():
             self.viewModel.recoverFiles(paths)
+
+    ###############################################################################
+    # Editing the correction data                                                 #
+    ###############################################################################
+
+    def _onCutClicked(self):
+        if self.handles.cutting:
+            self._endCutMode()
+            return
+        if self.handles.correctionData is None:
+            self._notify("error", "No data", "Load the data to correct first.")
+            return
+        if self.handles.selectingPetStart:
+            self._endPetSelection()
+        w = self.widgets
+        self.handles.cutting = True
+        w.cutButton.setText("Done")
+        w.cutRow.setVisible(True)
+        w.resampleButton.setEnabled(False)
+        self._showSampleMarkers(True)
+        self._updateCutPreview()
+
+    def _endCutMode(self):
+        if not self.handles.cutting:
+            return
+        w = self.widgets
+        self.handles.cutting = False
+        w.cutButton.setText("Cut")
+        w.cutRow.setVisible(False)
+        w.resampleButton.setEnabled(self.handles.correctionData is not None)
+        self.handles.cutRegion.setVisible(False)
+        self._updateCutPreview()
+        self._showSampleMarkers(False)
+
+    def _onCorrectionPlotDragged(self, event, axis=None):
+        """In cut mode, a left drag on the plot selects the samples to cut; else the plot pans as usual."""
+        if not self.handles.cutting or axis is not None or event.button() != Qt.MouseButton.LeftButton:
+            self.handles.dragPlot(event, axis)
+            return
+        event.accept()
+        vb = self.widgets.correctionPlot.plotItem.vb
+        start = vb.mapSceneToView(event.buttonDownScenePos()).x()
+        end = vb.mapSceneToView(event.scenePos()).x()
+        # Visible first: setRegion previews and snaps the selection at once.
+        self.handles.cutRegion.setVisible(True)
+        self.handles.cutRegion.setRegion(sorted((start, end)))
+
+    def _snapCutRegion(self, *_):
+        """Move the cut selection's edges to the nearest midway points between samples."""
+        data = self.handles.correctionData
+        if data is None or data["t"].size < 2:
+            return
+        x = data["t"] - self.handles.correctionZero
+        edges = np.concatenate(([x[0] - (x[1] - x[0]) / 2], (x[:-1] + x[1:]) / 2, [x[-1] + (x[-1] - x[-2]) / 2]))
+        snapped = [float(edges[np.abs(edges - edge).argmin()]) for edge in self.handles.cutRegion.getRegion()]
+        if snapped[0] != snapped[1]:
+            self.handles.cutRegion.setRegion(snapped)
+
+    def _cutWindow(self):
+        """The cut selection in PC times, or None when nothing is selected."""
+        if not self.handles.cutting or not self.handles.cutRegion.isVisible():
+            return None
+        start, end = self.handles.cutRegion.getRegion()
+        return start + self.handles.correctionZero, end + self.handles.correctionZero
+
+    def _updateCutPreview(self, *_):
+        """Show the samples selected and the line, from edge to edge, that would replace them,
+        or why there is none."""
+        h, w = self.handles, self.widgets
+        window = self._cutWindow()
+        result, reason = (None, "Drag in the plot to select samples") if window is None \
+            else self.viewModel.cutPreview(*window, w.cutAverageSpin.value())
+        w.applyCutButton.setEnabled(result is not None)
+        if result is None:
+            h.cutPreviewCurve.setData([], [])
+            h.cutSelectedPoints.setData([], [])
+            w.cutRow.contentLabel.setText(reason)
+            return
+        t, values = result
+        zero = h.correctionZero
+        h.cutPreviewCurve.setData(t - zero, values)
+        selected = (h.correctionData["t"] >= window[0]) & (h.correctionData["t"] <= window[1])
+        tSelected = h.correctionData["t"][selected] - zero
+        h.cutSelectedPoints.setData(tSelected, h.correctionData["coincidences"][selected])
+        w.cutRow.contentLabel.setText(f"{tSelected.size} samples, {tSelected[0]:.1f} to {tSelected[-1]:.1f} s")
+
+    def _applyCut(self):
+        window = self._cutWindow()
+        if window is not None and self.viewModel.applyCut(*window, self.widgets.cutAverageSpin.value()):
+            self.handles.cutRegion.setVisible(False)
+            self._updateCutPreview()
+
+    def _showSampleMarkers(self, show):
+        """Mark every sample on the raw curve, as while cutting."""
+        curve = self.handles.rawCurve
+        if not show:
+            curve.setSymbol(None)
+            return
+        curve.setSymbol("o")
+        curve.setSymbolSize(SAMPLE_MARKER_PX)
+        curve.setSymbolPen(None)
+        curve.setSymbolBrush(pg.mkBrush(StyleEngine.token("c_plot_curve_1")))
+
+    def _resampling(self):
+        return self.handles.resampleDialog is not None and self.handles.resampleDialog.isVisible()
+
+    def _onResamplingClicked(self):
+        """Open the resample window, or close it ("Done") once it is open."""
+        if self._resampling():
+            self._closeResampleDialog()
+        else:
+            self._openResampleDialog()
+
+    def _closeResampleDialog(self):
+        """Close the resample window, asking first if its sections are not applied."""
+        dialog = self.handles.resampleDialog
+        if dialog.hasPendingChanges():
+            choice = self._askUnappliedResample(dialog.canApply())
+            if choice == "cancel":
+                dialog.raise_()  # back to the window, in front of the main one
+                dialog.activateWindow()
+                return
+            if choice == "apply" and not self.viewModel.applyResample(dialog.sections()):
+                return  # the error is reported; the window stays to fix it
+        dialog.close()
+
+    def _askUnappliedResample(self, canApply):
+        """Ask what to do with sections not applied: "apply", "discard" or "cancel"."""
+        text = ("The sections in the Resample window have changes that have not been applied. "
+                "Apply them, discard them, or go back to the window?" if canApply else
+                "Some sections in the Resample window cannot be applied (in red). "
+                "Discard the changes, or go back to fix them?")
+        box = MessageBox("Resampling not applied", text, self)
+        box.yesButton.setText("Apply")
+        box.yesButton.setEnabled(canApply)
+        discardButton = PushButton("Discard", box.buttonGroup)
+        discardButton.clicked.connect(lambda: box.done(2))
+        box.buttonLayout.insertWidget(1, discardButton, 1, Qt.AlignmentFlag.AlignVCenter)
+        return {1: "apply", 2: "discard"}.get(box.exec(), "cancel")
+
+    def _openResampleDialog(self):
+        if self.handles.correctionData is None:
+            self._notify("error", "No data", "Load the data to correct first.")
+            return
+        if self.handles.resampleDialog is None:
+            dialog = ResampleDialog(self, lambda: self.handles.correctionZero)
+            dialog.sectionsChanged.connect(self._previewResample)
+            dialog.applyRequested.connect(self._applyResample)
+            dialog.visibilityChanged.connect(self._onResampleDialogShown)
+            self.handles.resampleDialog = dialog
+        self.handles.resampleDialog.setSections(self.viewModel.samplingSections())
+        self.handles.resampleDialog.show()
+        self.handles.resampleDialog.raise_()
+
+    def _previewResample(self, sections):
+        h = self.handles
+        for line in h.sectionLines:
+            self.widgets.correctionPlot.removeItem(line)
+        h.sectionLines = []
+        result, reason = self.viewModel.resamplePreview(sections)
+        if result is None:
+            h.resampleDialog.showPreview(None, reason=reason)
+            h.resamplePreviewCurve.setData([], [])
+            return
+        t, values, counts, problems = result
+        # The preview holds the merged samples only: none, and nothing changes.
+        h.resampleDialog.showPreview(counts, problems, changes=t.size > 0)
+        zero = h.correctionZero
+        h.resamplePreviewCurve.setData(t - zero, values)
+        pen = pg.mkPen(StyleEngine.token("c_plot_curve_4"), style=Qt.PenStyle.DotLine)
+        for boundary in sorted({edge for section in sections for edge in section[:2]}):
+            line = pg.InfiniteLine(pos=boundary - zero, angle=90, movable=False, pen=pen)
+            self.widgets.correctionPlot.addItem(line)
+            h.sectionLines.append(line)
+
+    def _applyResample(self, sections):
+        changed = self.viewModel.applyResample(sections)
+        if changed is False:  # nothing to apply: Apply closes the window
+            self.handles.resampleDialog.close()
+        elif changed:
+            # The sections as the data is now sampled.
+            self.handles.resampleDialog.setSections(self.viewModel.samplingSections())
+
+    def _onResampleDialogShown(self, shown):
+        """Previews while the window shows (it emits its sections then); no cutting meanwhile."""
+        h = self.handles
+        self.widgets.resampleButton.setText("Done" if shown else "Resampling")
+        if shown:
+            self.widgets.cutButton.setEnabled(False)
+            return
+        h.resamplePreviewCurve.setData([], [])
+        for line in h.sectionLines:
+            self.widgets.correctionPlot.removeItem(line)
+        h.sectionLines = []
+        self.widgets.cutButton.setEnabled(h.correctionData is not None)
+
+    def _onSaveEdited(self):
+        source = self.viewModel.correctionSource()
+        if source is None:
+            return
+        # An edited file is saved again under its own name, not as "..._edited_edited.csv".
+        stem, extension = os.path.splitext(source)
+        target, _ = self._askSavePath("Save edited data", stem.removesuffix(EDITED_SUFFIX) + extension,
+                                      EDITED_FORMATS)
+        if target and self.viewModel.saveEditedData(target):
+            self._notify("success", "Edited data saved", target)
 
     ###############################################################################
     # Calibration                                                                 #
@@ -634,6 +970,9 @@ class View(EINview):
         }
 
     def closeEvent(self, event):
+        if not self._confirmDiscardEdits("Close"):
+            event.ignore()
+            return
         self.viewModel.saveState(self._collectState())
         self.viewModel.shutdown()
         event.accept()
@@ -643,6 +982,201 @@ class View(EINview):
                 "info": InfoBar.info}[kind]
         show(title, message, parent=self, position=InfoBarPosition.TOP_RIGHT,
              duration=-1 if kind == "error" else 4000)
+
+
+class ResampleDialog(EINdialog):
+    """The sections to resample, one row each: start, end, sampling period, and the samples that makes.
+
+    Not modal, so the plot can be zoomed while editing. Times are shown in seconds on
+    the Correction plot's axis and kept as PC times, so a section stays on the same
+    samples when the plot's time 0 (the PET start) changes. Adjacent sections share
+    their boundary: moving one end moves the next section's start. "Add section" splits
+    the selected section (the last one without a selection) in two halves; "Delete
+    section" gives the section's time to the one before it, so the first one stays.
+
+    Args:
+        mainWindow: The View.
+        zero: Returns the PC time of the plot's time 0.
+    """
+
+    # [(start, end, period)] after every change, PC times.
+    sectionsChanged = pyqtSignal(list)
+    # The same, when Apply is clicked.
+    applyRequested = pyqtSignal(list)
+    # True when the window shows, False when it is closed or hidden (Esc, a minimized main window).
+    visibilityChanged = pyqtSignal(bool)
+
+    HEADERS = ["Start (s)", "End (s)", "Sampling (s/sample)", "Samples"]
+
+    def __init__(self, mainWindow, zero):
+        super().__init__(mainWindow, "Resample")
+        self._zero = zero
+        self._sections = []
+        self._counts = None
+        # From the last preview: whether applying would change the data, and whether it can be applied.
+        self._changes = False
+        self._valid = False
+
+        self.table = TableWidget(self)
+        self.table.setColumnCount(len(self.HEADERS))
+        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.itemChanged.connect(self._onItemChanged)
+        self.table.itemSelectionChanged.connect(self._updateButtons)
+        self.statusLabel = EINcaptionLabel("")
+        self.statusLabel.setWordWrap(True)
+        self.addButton = EINbutton("Add section", length="med")
+        self.deleteButton = EINbutton("Delete section", length="med")
+        self.applyButton = EINbutton("Resample", role="primary", length="short")
+        self.addButton.clicked.connect(self._addSection)
+        self.deleteButton.clicked.connect(self._deleteSection)
+        self.applyButton.clicked.connect(self._onApplyClicked)
+
+        spacing = StyleEngine.px("section_spacing_px")
+        content = QWidget(self)
+        column = EINvBoxLayout(content, spacing=spacing)
+        column.setContentsMargins(spacing, spacing, spacing, spacing)
+        column.addWidget(self.table, 1)
+        column.addWidget(self.statusLabel)
+        buttons = EINhBoxLayout()
+        for button in (self.addButton, self.deleteButton):
+            buttons.addWidget(button)
+        buttons.addStretch(1)
+        buttons.addWidget(self.applyButton)
+        column.addLayout(buttons)
+        self.layout.addWidget(content)
+        self.resize(560, 320)
+
+    def sections(self):
+        return [tuple(section) for section in self._sections]
+
+    def setSections(self, sections):
+        """Show ``[(start, end, period)]`` (PC times) and emit them."""
+        self._sections = [list(section) for section in sections]
+        self._counts = None
+        self.refresh()
+
+    def refresh(self):
+        """Fill the table from the sections, on the plot's current time axis, and emit them."""
+        zero = self._zero()
+        table = self.table
+        table.blockSignals(True)
+        table.setRowCount(len(self._sections))
+        for row, (start, end, period) in enumerate(self._sections):
+            for column, text in enumerate((f"{start - zero:.1f}", f"{end - zero:.1f}", f"{round(period, 3):g}")):
+                table.setItem(row, column, QTableWidgetItem(text))
+            count = QTableWidgetItem("")
+            count.setFlags(count.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 3, count)
+        table.blockSignals(False)
+        self._updateButtons()
+        self.sectionsChanged.emit(self.sections())
+
+    def hasPendingChanges(self):
+        """True if the sections would change the data, or some cannot be applied."""
+        return self._changes or not self._valid
+
+    def canApply(self):
+        return self._valid
+
+    def showPreview(self, counts, problems=None, reason="", changes=False):
+        """Show the samples each section would have and mark, in red, the sections that
+        cannot be applied, saying why.
+
+        Args:
+            counts: Samples per section, None for one with a problem; None for all
+                when there is nothing to preview (``reason`` says why).
+            problems: Why each section cannot be applied, ``""`` for one that can.
+            changes: Whether applying would change the data; the button says "Done"
+                and only closes the window when it would not.
+        """
+        table = self.table
+        problems = problems or [""] * table.rowCount()
+        errorColor = QColor(StyleEngine.token("c_status_error_bg"))
+        errorColor.setAlpha(ERROR_ROW_ALPHA)
+        errorBack = QBrush(errorColor)
+        table.blockSignals(True)
+        for row, problem in enumerate(problems):
+            count = None if counts is None else counts[row]
+            table.item(row, 3).setText("-" if count is None else str(count))
+            for column in range(table.columnCount()):
+                item = table.item(row, column)
+                item.setData(Qt.ItemDataRole.BackgroundRole, errorBack if problem else None)
+        table.blockSignals(False)
+        self.statusLabel.setText("\n".join(f"Section {row + 1}: {problem}"
+                                           for row, problem in enumerate(problems) if problem) or reason)
+        self._valid = counts is not None and not any(problems)
+        self._changes = changes
+        self.applyButton.setEnabled(self._valid)
+        self.applyButton.setText("Done" if self._valid and not changes else "Resample")
+
+    def _onApplyClicked(self):
+        if self._changes:
+            self.applyRequested.emit(self.sections())
+        else:
+            self.close()
+
+    def _onItemChanged(self, item):
+        try:
+            value = float(item.text().replace(",", "."))
+        except ValueError:
+            value = math.nan
+        row, column, sections = item.row(), item.column(), self._sections
+        if column == 2:
+            if value > 0:
+                sections[row][2] = value
+        elif math.isfinite(value):
+            t = value + self._zero()
+            # A boundary moves between its neighbours only, and moves the adjacent section's too.
+            if column == 0 and (sections[row - 1][0] if row > 0 else -math.inf) < t < sections[row][1]:
+                sections[row][0] = t
+                if row > 0:
+                    sections[row - 1][1] = t
+            elif column == 1 and sections[row][0] < t < (sections[row + 1][1] if row + 1 < len(sections) else math.inf):
+                sections[row][1] = t
+                if row + 1 < len(sections):
+                    sections[row + 1][0] = t
+        selected = self._targetRow()
+        self.refresh()  # also undoes a rejected value
+        self.table.selectRow(selected)
+
+    def _targetRow(self):
+        """The selected section, or the last one."""
+        rows = {index.row() for index in self.table.selectedIndexes()}
+        return min(rows) if rows else len(self._sections) - 1
+
+    def _addSection(self):
+        row = self._targetRow()
+        start, end, period = self._sections[row]
+        middle = (start + end) / 2
+        self._sections[row][1] = middle
+        self._sections.insert(row + 1, [middle, end, period])
+        self.refresh()
+        self.table.selectRow(row + 1)
+
+    def _deleteSection(self):
+        row = self._targetRow()
+        if row == 0:
+            return
+        self._sections[row - 1][1] = self._sections[row][1]
+        del self._sections[row]
+        self.refresh()
+        self.table.selectRow(row - 1)
+
+    def _updateButtons(self):
+        self.deleteButton.setEnabled(len(self._sections) > 1 and self._targetRow() > 0)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.visibilityChanged.emit(True)
+        self.refresh()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.visibilityChanged.emit(False)
 
 
 def _toTopLeft(legend):

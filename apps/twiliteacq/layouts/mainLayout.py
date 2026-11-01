@@ -45,8 +45,8 @@ class MainWidget(EINnavbarLayout):
         "Connection" over "Acquisition" | "Display and markers" over "Save"
     Page "Correction" (rows):
         The data's plot, full width
-        "Tracer" (the isotope) | "Data"
-        "Correction" (PET start, background) | "Calibration and export"
+        "Tracer" (the isotope) over "Correction" (PET start, background, calibration factor)
+        | "Data" (with the edits: cut, resample) over "Export"
     Page "Calibration" (rows):
         The calibration run's plot, full width
         "Calibration run" | "Calibration factor"
@@ -81,8 +81,8 @@ class MainWidget(EINnavbarLayout):
                       "correctionPlot")
         page = EINpage("correctionPage")
         page.addWidget(asCard(plot), 1)
-        page.addWidget(_columns([self._makeIsotopeCard()], [self._makeCorrectionDataCard()]))
-        page.addWidget(_columns([self._makeCorrectionCard()], [self._makeCalibrationFactorCard()]))
+        page.addWidget(_columns([self._makeIsotopeCard(), self._makeCorrectionCard()],
+                                [self._makeCorrectionDataCard(), self._makeExportCard()]))
         self.addPage(page, FluentIcon.EDIT, "Correction")
 
     def _makeCalibrationPage(self):
@@ -178,32 +178,38 @@ class MainWidget(EINnavbarLayout):
         backgroundSpin = _named(EINdoubleSpinBox(length="short"), "backgroundSpin")
         backgroundSpin.setRange(0.0, 1e7)
         backgroundSpin.setDecimals(2)
+        cfSpin = _named(EINdoubleSpinBox(length="short"), "cfSpin")
+        cfSpin.setRange(0.0, 1e6)
+        cfSpin.setDecimals(6)
         card = EINcardWidget("Correction")
         card.addRow(_row("PET scan start", petStartEdit, petSelectButton,
                          content="PC clock, synchronised with the PET; Select: click the plot"))
         card.addRow(_row("Background", backgroundModeDropdown, backgroundSpin, EINbodyLabel("counts/s")))
+        card.addRow(_row("Calibration factor", cfSpin, EINbodyLabel("kBq/cc per count")))
         return card
 
-    def _makeCalibrationFactorCard(self):
-        cfSpin = _named(EINdoubleSpinBox(length="short"), "cfSpin")
-        cfSpin.setRange(0.0, 1e6)
-        cfSpin.setDecimals(6)
-        applyButton = _named(EINbutton("Apply", role="primary", length="short"), "applyCorrectionButton")
-        saveButton = _named(EINbutton("Save...", length="short"), "saveCorrectedButton")
-
-        card = EINcardWidget("Calibration and export")
-        card.addRow(_row("Calibration factor", cfSpin, EINbodyLabel("kBq/cc per count")))
-        card.addRow(_row("Corrected data", applyButton, saveButton,
+    def _makeExportCard(self):
+        card = EINcardWidget("Export")
+        card.addRow(_row("Corrected data", _named(EINbutton("Save...", length="short"), "saveCorrectedButton"),
                          content="PMOD blood (.bld), PMOD TAC (.tac) or CSV"))
         return card
 
     def _makeCorrectionDataCard(self):
         correctionFileLabel = _named(EINcaptionLabel("No data loaded"), "correctionFileLabel")
         correctionFileLabel.setWordWrap(True)
+        cutAverageSpin = _named(EINspinBox(length="vshort"), "cutAverageSpin")
+        cutAverageSpin.setRange(1, 100)
         card = EINcardWidget("Data")
         card.addRow(_row("Acquisition", correctionFileLabel,
                          _named(EINbutton("Current", length="short"), "useCurrentDataButton"),
                          _named(EINbutton("Load...", length="short"), "loadCorrectionDataButton")))
+        card.addRow(_row("Edit", _named(EINbutton("Cut", length="short"), "cutButton"),
+                         _named(EINbutton("Resampling", length="med"), "resampleButton"),
+                         _named(EINbutton("Save...", length="short"), "saveEditedButton")))
+        # Shown in cut mode only; the description says what is selected.
+        card.addRow(_named(_row("Cut", EINbodyLabel("Edges: mean of"), cutAverageSpin, EINbodyLabel("samples"),
+                                _named(EINbutton("Apply cut", role="primary", length="short"), "applyCutButton"),
+                                content="Drag in the plot to select samples"), "cutRow"))
         return card
 
     ###############################################################################

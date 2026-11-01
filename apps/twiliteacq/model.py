@@ -4,6 +4,8 @@ import threading
 import time
 from datetime import datetime
 
+from pathlib import Path
+
 import numpy as np
 import yaml
 
@@ -50,6 +52,8 @@ class Model:
         self.calibrationFactor = 1.0
         self.calibrationRun = None
         self.correctionData = None
+        # True while correctionData has edits not saved yet.
+        self.unsavedEdits = False
 
     ###########################################################################
     # Connection                                                              #
@@ -349,18 +353,35 @@ class Model:
         if len(acq) == 0:
             raise ValueError(f"{os.path.basename(path)} holds no samples")
         self.correctionData = acq
-        self.logger.info(f"Data to correct: {path} ({len(acq)} samples)")
+        self.unsavedEdits = False
+        self.logger.info(f"Data to correct: {path} ({len(acq)} samples"
+                         + (f", {len(acq.edits)} edits" if acq.edits else "") + ")")
         return np.array(acq.t_wall), np.array(acq.coincidences, dtype=float)
+
+    def correctionArrays(self):
+        """The loaded data as arrays: ``{"t", "coincidences", "interpolated", "start"}``.
+
+        ``t`` is each sample's time (``twilite.storage.sample_times``: when its report
+        arrived, or the middle of a resampled sample); ``start`` the PC time of the
+        acquisition start.
+        """
+        from twilite.storage import sample_times
+
+        acq = self.correctionData
+        return {"t": np.array(sample_times(acq)),
+                "coincidences": np.array(acq.coincidences, dtype=float),
+                "interpolated": np.array(acq.interpolated, dtype=bool), "start": acq.t_wall[0] - acq.t_rel_s[0]}
 
     def measuredBackground(self, petStart):
         """Mean coincidence rate of the loaded data before ``petStart``; None if there is none."""
         from twilite.correction import background_before_start
+        from twilite.storage import sample_times
 
         acq = self.correctionData
         if acq is None or petStart is None:
             return None
         try:
-            return background_before_start([t - petStart for t in acq.t_wall], acq.coincidences)
+            return background_before_start([t - petStart for t in sample_times(acq)], acq.coincidences)
         except ValueError:
             return None
 
@@ -370,12 +391,129 @@ class Model:
         Returns None while no data is loaded or the PET start is not set.
         """
         from twilite.correction import apply
+        from twilite.storage import sample_times
 
         if self.correctionData is None or self.petStart is None:
             return None
         acq = self.correctionData
-        t, activity, background = apply(self.correctionSettings(), acq.t_wall, acq.coincidences)
+        t, activity, background = apply(self.correctionSettings(), sample_times(acq), acq.coincidences)
         return np.array(t), np.array(activity), background
+
+    ###########################################################################
+    # Editing the loaded data                                                 #
+    ###########################################################################
+
+    def cutPreview(self, start, end, nAverage):
+        """What :meth:`cut` would put in place: ``(t, coincidences)`` arrays of the line from
+        edge to edge, through the samples replaced."""
+        from twilite.editing import plan_cut
+
+        plan = plan_cut(self._editable(), start, end, nAverage)
+        points = sorted([*zip(plan.times, plan.values["coincidences"]),
+                         *((t, values["coincidences"]) for t, values in plan.edges)])
+        t, values = zip(*points)
+        return np.array(t), np.array(values)
+
+    def cut(self, start, end, nAverage):
+        """Replace the samples whose time is in ``[start, end]`` (PC times) by a line between their edges.
+
+        The edge values are the means of ``nAverage`` samples on each side.
+        """
+        from twilite.editing import cut
+
+        self._replaceData(cut(self._editable(), start, end, nAverage))
+        return True
+
+    def samplingSections(self):
+        """How the loaded data is sampled: ``[(start, end, period)]``, PC times and seconds."""
+        from twilite.editing import sampling_sections
+
+        return [(s.start, s.end, s.period) for s in sampling_sections(self._editable())]
+
+    def resamplePreview(self, sections):
+        """What :meth:`resample` would make: ``(t, coincidences, samples per section, problems)``.
+
+        Only the merged samples are returned, the others stay as they are; NaN separates
+        runs of them. ``problems`` says why each section cannot be applied (``""`` if it
+        can); such a section is left out of the preview and its count is None.
+        """
+        from twilite.editing import plan_resample, resample, section_problems
+        from twilite.storage import sample_times
+
+        acq = self._editable()
+        sections = self._sections(sections)
+        problems = section_problems(acq, sections)
+        valid = [s for s, problem in zip(sections, problems) if not problem]
+        edited = resample(acq, valid)
+        groups, validCounts = plan_resample(acq, valid)
+        validCounts = iter(validCounts)
+        counts = [None if problem else next(validCounts) for problem in problems]
+        t, values = [], []
+        for group, tSample, value in zip(groups, sample_times(edited), edited.coincidences):
+            if len(group) > 1:
+                t.append(tSample)
+                values.append(value)
+            elif values and not math.isnan(values[-1]):
+                t.append(t[-1])
+                values.append(math.nan)
+        return np.array(t), np.array(values, dtype=float), counts, problems
+
+    def resample(self, sections):
+        """Resample the loaded data; ``sections`` is ``[(start, end, period)]``, PC times and seconds.
+
+        Returns False, leaving the data as it is, when every section keeps its samples.
+
+        Raises:
+            ValueError: The sections are invalid.
+        """
+        from twilite.editing import resample
+
+        acq = self._editable()
+        edited = resample(acq, self._sections(sections))
+        if len(edited.edits) == len(acq.edits):
+            return False
+        self._replaceData(edited)
+        return True
+
+    def hasUnsavedEdits(self):
+        return self.unsavedEdits
+
+    def saveEditedData(self, path):
+        """Write the edited data to ``path``, which then becomes the loaded data's file.
+
+        Raises:
+            ValueError: Nothing was edited, or ``path`` is an acquisition as recorded
+                (the original data is never overwritten).
+        """
+        from twilite.storage import read_acquisition, write_acquisition
+
+        acq = self._editable()
+        if not acq.edits:
+            raise ValueError("The data has not been edited")
+        if os.path.exists(path) and not read_acquisition(path).edits:
+            raise ValueError(f"{os.path.basename(path)} holds an acquisition as recorded; "
+                             "save the edited data under another name")
+        write_acquisition(acq, path)
+        acq.path = Path(path)
+        self.unsavedEdits = False
+        self.logger.info(f"Edited data saved: {path} ({len(acq)} samples, {len(acq.edits)} edits)")
+
+    def _editable(self):
+        if self.correctionData is None:
+            raise ValueError("Load the data to correct first")
+        return self.correctionData
+
+    @staticmethod
+    def _sections(sections):
+        from twilite.editing import Section
+
+        return [Section(*section) for section in sections]
+
+    def _replaceData(self, edited):
+        for line in edited.edits[len(self.correctionData.edits):]:
+            self.logger.info(f"Edited {edited.path.name}: {line}")
+        self.correctionData = edited
+        self.unsavedEdits = True
 
     def _settingsMetadata(self):
         isotope = self.isotope()
