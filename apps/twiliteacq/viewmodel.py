@@ -303,7 +303,7 @@ class ViewModel(QObject):
             return None, str(error)
 
     def applyCut(self, start, end, nAverage):
-        """Cut ``[start, end]`` (PC times) out of the correction data; None if it cannot be."""
+        """Cut ``[start, end]`` (PC times) out of the correction data; False if it cannot be."""
         return self._edit(self.model.cut, start, end, nAverage)
 
     def samplingSections(self):
@@ -314,20 +314,14 @@ class ViewModel(QObject):
             return []
 
     def resamplePreview(self, sections):
-        """``((t, coincidences, samples per section, problems), "")``, or ``(None, why not)``.
-
-        See ``Model.resamplePreview``.
-        """
+        """The preview of ``Model.resamplePreview``, or None without data."""
         try:
-            return self.model.resamplePreview(sections), ""
-        except ValueError as error:
-            return None, str(error)
+            return self.model.resamplePreview(sections)
+        except ValueError:
+            return None
 
     def applyResample(self, sections):
-        """Resample the correction data; ``sections`` is ``[(start, end, period)]``.
-
-        True if the data changed, False if nothing would change, None if it cannot be done.
-        """
+        """Resample the correction data; ``sections`` is ``[(start, end, period)]``; False if it cannot be."""
         return self._edit(self.model.resample, sections)
 
     def hasUnsavedEdits(self):
@@ -345,11 +339,9 @@ class ViewModel(QObject):
 
     def _edit(self, func, *args):
         try:
-            changed = func(*args)
+            func(*args)
         except ValueError as error:
             self.errorOccurred.emit(str(error))
-            return None
-        if not changed:
             return False
         self.correctionDataEdited.emit(self._correctionData())
         self._computeCorrection()

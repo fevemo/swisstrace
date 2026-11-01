@@ -137,8 +137,6 @@ class View(EINview):
         w.cfSpin.setValue(1.0)
         w.cutRow.setVisible(False)
         w.cutAverageSpin.setValue(1)
-        for button in (w.cutButton, w.resampleButton, w.saveEditedButton):
-            button.setEnabled(False)
 
         # Live plot: one curve per series; NaN points (lost connections) break the line.
         plot = w.plotWidget
@@ -164,6 +162,7 @@ class View(EINview):
         self._refreshCorrectionPlot()  # shows "-" as the measured background until data is loaded
 
         indexFile = os.path.join(self.configManager.mainConfig.docPath, "index.html")
+        self._updateEditButtons()
         if os.path.isfile(indexFile):
             w.docView.updateHTML(QUrl.fromLocalFile(os.path.abspath(indexFile)).toString())
 
@@ -412,6 +411,8 @@ class View(EINview):
         self.handles.selectingPetStart = False
         # The "Fixed value" background, kept while the field shows the measured mean.
         self.handles.fixedBackground = 0.0
+        # The resample window shows (set when it shows or hides, so true in its hide event too).
+        self.handles.resampling = False
 
     def _onUseCurrentData(self):
         if self._confirmDiscardEdits("Load the current acquisition"):
@@ -444,11 +445,16 @@ class View(EINview):
         self._refreshCorrectionPlot()  # the same time 0, so the zoom stays
 
     def _showDataName(self, data):
-        w = self.widgets
-        w.correctionFileLabel.setText(data["name"])
-        w.saveEditedButton.setEnabled(data["unsaved"])
-        w.cutButton.setEnabled(self.handles.resampleDialog is None or not self.handles.resampleDialog.isVisible())
-        w.resampleButton.setEnabled(not self.handles.cutting)
+        self.widgets.correctionFileLabel.setText(data["name"])
+        self._updateEditButtons()
+
+    def _updateEditButtons(self):
+        """Cut and Resampling need data and exclude each other; Save needs unsaved edits."""
+        w, h = self.widgets, self.handles
+        data = h.correctionData
+        w.cutButton.setEnabled(data is not None and not h.resampling)
+        w.resampleButton.setEnabled(data is not None and not h.cutting)
+        w.saveEditedButton.setEnabled(data is not None and data["unsaved"])
 
     def _confirmDiscardEdits(self, action):
         """True if there are no unsaved edits, or the user agrees to lose them."""
@@ -526,7 +532,7 @@ class View(EINview):
 
         # The previews follow the data and its time 0.
         self._updateCutPreview()
-        if self._resampling():
+        if self.handles.resampling:
             self.handles.resampleDialog.refresh()
 
     def _petStart(self):
@@ -688,7 +694,7 @@ class View(EINview):
         self.handles.cutting = True
         w.cutButton.setText("Done")
         w.cutRow.setVisible(True)
-        w.resampleButton.setEnabled(False)
+        self._updateEditButtons()
         self._showSampleMarkers(True)
         self._updateCutPreview()
 
@@ -699,7 +705,7 @@ class View(EINview):
         self.handles.cutting = False
         w.cutButton.setText("Cut")
         w.cutRow.setVisible(False)
-        w.resampleButton.setEnabled(self.handles.correctionData is not None)
+        self._updateEditButtons()
         self.handles.cutRegion.setVisible(False)
         self._updateCutPreview()
         self._showSampleMarkers(False)
@@ -773,12 +779,9 @@ class View(EINview):
         curve.setSymbolPen(None)
         curve.setSymbolBrush(pg.mkBrush(StyleEngine.token("c_plot_curve_1")))
 
-    def _resampling(self):
-        return self.handles.resampleDialog is not None and self.handles.resampleDialog.isVisible()
-
     def _onResamplingClicked(self):
         """Open the resample window, or close it ("Done") once it is open."""
-        if self._resampling():
+        if self.handles.resampling:
             self._closeResampleDialog()
         else:
             self._openResampleDialog()
@@ -826,19 +829,13 @@ class View(EINview):
 
     def _previewResample(self, sections):
         h = self.handles
-        for line in h.sectionLines:
-            self.widgets.correctionPlot.removeItem(line)
-        h.sectionLines = []
-        result, reason = self.viewModel.resamplePreview(sections)
-        if result is None:
-            h.resampleDialog.showPreview(None, reason=reason)
-            h.resamplePreviewCurve.setData([], [])
+        self._clearResamplePreview()
+        preview = self.viewModel.resamplePreview(sections)
+        if preview is None:
             return
-        t, values, counts, problems = result
-        # The preview holds the merged samples only: none, and nothing changes.
-        h.resampleDialog.showPreview(counts, problems, changes=t.size > 0)
+        h.resampleDialog.showPreview(preview["counts"], preview["problems"], preview["changes"])
         zero = h.correctionZero
-        h.resamplePreviewCurve.setData(t - zero, values)
+        h.resamplePreviewCurve.setData(preview["t"] - zero, preview["coincidences"])
         pen = pg.mkPen(StyleEngine.token("c_plot_curve_4"), style=Qt.PenStyle.DotLine)
         for boundary in sorted({edge for section in sections for edge in section[:2]}):
             line = pg.InfiniteLine(pos=boundary - zero, angle=90, movable=False, pen=pen)
@@ -846,25 +843,24 @@ class View(EINview):
             h.sectionLines.append(line)
 
     def _applyResample(self, sections):
-        changed = self.viewModel.applyResample(sections)
-        if changed is False:  # nothing to apply: Apply closes the window
-            self.handles.resampleDialog.close()
-        elif changed:
+        if self.viewModel.applyResample(sections):
             # The sections as the data is now sampled.
             self.handles.resampleDialog.setSections(self.viewModel.samplingSections())
 
     def _onResampleDialogShown(self, shown):
         """Previews while the window shows (it emits its sections then); no cutting meanwhile."""
-        h = self.handles
+        self.handles.resampling = shown
         self.widgets.resampleButton.setText("Done" if shown else "Resampling")
-        if shown:
-            self.widgets.cutButton.setEnabled(False)
-            return
+        self._updateEditButtons()
+        if not shown:
+            self._clearResamplePreview()
+
+    def _clearResamplePreview(self):
+        h = self.handles
         h.resamplePreviewCurve.setData([], [])
         for line in h.sectionLines:
             self.widgets.correctionPlot.removeItem(line)
         h.sectionLines = []
-        self.widgets.cutButton.setEnabled(h.correctionData is not None)
 
     def _onSaveEdited(self):
         source = self.viewModel.correctionSource()
@@ -1012,7 +1008,6 @@ class ResampleDialog(EINdialog):
         super().__init__(mainWindow, "Resample")
         self._zero = zero
         self._sections = []
-        self._counts = None
         # From the last preview: whether applying would change the data, and whether it can be applied.
         self._changes = False
         self._valid = False
@@ -1056,7 +1051,6 @@ class ResampleDialog(EINdialog):
     def setSections(self, sections):
         """Show ``[(start, end, period)]`` (PC times) and emit them."""
         self._sections = [list(section) for section in sections]
-        self._counts = None
         self.refresh()
 
     def refresh(self):
@@ -1082,33 +1076,30 @@ class ResampleDialog(EINdialog):
     def canApply(self):
         return self._valid
 
-    def showPreview(self, counts, problems=None, reason="", changes=False):
+    def showPreview(self, counts, problems, changes):
         """Show the samples each section would have and mark, in red, the sections that
         cannot be applied, saying why.
 
         Args:
-            counts: Samples per section, None for one with a problem; None for all
-                when there is nothing to preview (``reason`` says why).
+            counts: Samples per section, None for one with a problem.
             problems: Why each section cannot be applied, ``""`` for one that can.
             changes: Whether applying would change the data; the button says "Done"
                 and only closes the window when it would not.
         """
         table = self.table
-        problems = problems or [""] * table.rowCount()
         errorColor = QColor(StyleEngine.token("c_status_error_bg"))
         errorColor.setAlpha(ERROR_ROW_ALPHA)
         errorBack = QBrush(errorColor)
         table.blockSignals(True)
-        for row, problem in enumerate(problems):
-            count = None if counts is None else counts[row]
+        for row, (count, problem) in enumerate(zip(counts, problems)):
             table.item(row, 3).setText("-" if count is None else str(count))
             for column in range(table.columnCount()):
                 item = table.item(row, column)
                 item.setData(Qt.ItemDataRole.BackgroundRole, errorBack if problem else None)
         table.blockSignals(False)
         self.statusLabel.setText("\n".join(f"Section {row + 1}: {problem}"
-                                           for row, problem in enumerate(problems) if problem) or reason)
-        self._valid = counts is not None and not any(problems)
+                                           for row, problem in enumerate(problems) if problem))
+        self._valid = not any(problems)
         self._changes = changes
         self.applyButton.setEnabled(self._valid)
         self.applyButton.setText("Done" if self._valid and not changes else "Resample")

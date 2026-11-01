@@ -262,20 +262,24 @@ def test_editing_the_correction_data(model, tmp_path):
     # The line from the edge sample before the cut to the one after it.
     assert t - start == pytest.approx([15, 20, 25, 30, 35, 40, 45]) and values == pytest.approx([120] * 7)
     assert not model.hasUnsavedEdits()
-    assert model.cut(start + 20, start + 40, 2)
+    model.cut(start + 20, start + 40, 2)
     assert model.correctionArrays()["interpolated"].sum() == 5 and model.hasUnsavedEdits()
 
     sections = [(start, start + 145, 5.0), (start + 145, start + 295, 30.0)]
-    t, values, counts, problems = model.resamplePreview(sections)
-    assert counts == [30, 5] and problems == ["", ""] and len(model.correctionData) == 60  # a preview only
+    preview = model.resamplePreview(sections)
+    assert preview["counts"] == [30, 5] and preview["problems"] == ["", ""] and preview["changes"]
+    assert len(model.correctionData) == 60  # a preview only
     # The merged samples only, each in the middle of the reports it merges (150..175 s, ...).
-    assert t - start == pytest.approx([162.5, 192.5, 222.5, 252.5, 282.5])
-    assert model.resample(sections)
+    assert preview["t"] - start == pytest.approx([162.5, 192.5, 222.5, 252.5, 282.5])
+    model.resample(sections)
     assert len(model.correctionData) == 35
-    assert model.resample(model.samplingSections()) is False  # nothing to change
+    assert not model.resamplePreview(model.samplingSections())["changes"]
+    with pytest.raises(ValueError, match="Nothing to resample"):
+        model.resample(model.samplingSections())
     # A wrong section is left out of the preview; the others are still counted.
-    _, _, counts, problems = model.resamplePreview([(start, start + 145, 10.0), (start + 145, start + 295, 45.0)])
-    assert counts == [15, None] and problems[0] == "" and "multiple of 30 s" in problems[1]
+    preview = model.resamplePreview([(start, start + 145, 10.0), (start + 145, start + 295, 45.0)])
+    assert preview["counts"] == [15, None] and preview["problems"][0] == ""
+    assert "multiple of 30 s" in preview["problems"][1]
     assert len(model.correctionData) == 35
 
     with pytest.raises(ValueError, match="as recorded"):

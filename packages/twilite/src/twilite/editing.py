@@ -122,7 +122,27 @@ def _line(edges, channel, t):
 ###############################################################################
 
 
-def plan_resample(acq: Acquisition, sections: Sequence[Section]) -> tuple[list[list[int]], list[int]]:
+@dataclass(frozen=True, slots=True)
+class ResamplePlan:
+    """What :func:`resample` will do with some sections.
+
+    Attributes:
+        groups: The indices of the samples making each new sample, in order.
+        counts: The number of new samples in each section.
+        before: The number of samples in each section now.
+    """
+
+    groups: list[list[int]]
+    counts: list[int]
+    before: list[int]
+
+    @property
+    def changes(self) -> bool:
+        """Whether resampling changes the data: some section gets fewer samples."""
+        return self.counts != self.before
+
+
+def plan_resample(acq: Acquisition, sections: Sequence[Section]) -> ResamplePlan:
     """Group the samples into the samples :func:`resample` will make.
 
     A sample belongs to the first section its time falls in (``start <= t <= end``), so a
@@ -134,9 +154,6 @@ def plan_resample(acq: Acquisition, sections: Sequence[Section]) -> tuple[list[l
     A gap in the data (a lost connection) ends a group; samples outside every section
     stay alone.
 
-    Returns:
-        ``(groups, counts)``: the indices of the samples making each new sample, and
-        the number of new samples in each section.
 
     Raises:
         ValueError: A section cannot be applied; see :func:`section_problems`.
@@ -149,10 +166,13 @@ def plan_resample(acq: Acquisition, sections: Sequence[Section]) -> tuple[list[l
     durations = sample_durations(acq)
     groups: list[list[int]] = []
     counts = [0] * len(sections)
+    before = [0] * len(sections)
     current_section = None
     group_start = 0.0
     for i, t in enumerate(times):
         k = _section_of(sections, t)
+        if k is not None:
+            before[k] += 1
         fits = (k is not None and k == current_section and groups
                 and acq.t_wall[i] - group_start <= sections[k].period + durations[i] / 2)
         if fits:
@@ -163,7 +183,7 @@ def plan_resample(acq: Acquisition, sections: Sequence[Section]) -> tuple[list[l
         group_start = acq.t_wall[i] - durations[i]
         if k is not None:
             counts[k] += 1
-    return groups, counts
+    return ResamplePlan(groups, counts, before)
 
 
 def section_problems(acq: Acquisition, sections: Sequence[Section]) -> list[str]:
@@ -207,21 +227,21 @@ def _multiple_problem(period: float, current: float) -> str:
     return ""
 
 
-def resample(acq: Acquisition, sections: Sequence[Section]) -> Acquisition:
+def resample(acq: Acquisition, sections: Sequence[Section], plan: ResamplePlan | None = None) -> Acquisition:
     """Return a copy of ``acq`` resampled section by section; see :func:`plan_resample`.
 
     A merged sample ends when its last sample ends and lasts as long as its samples
     together (their counting time: the PC clock's jitter between reports is not counted),
     so the counts are kept exactly. Its rates are the duration-weighted means (NaN
     ignored), its index is its first sample's and it counts as interpolated if any of its
-    samples was.
+    samples was. ``plan`` is :func:`plan_resample`'s for these sections, if already made.
     """
-    groups, counts = plan_resample(acq, sections)
+    plan = plan or plan_resample(acq, sections)
     edited = _copy(acq)
     for name in ("index", "t_wall", "t_rel_s", *CHANNELS, "extras", "duration_s", "interpolated"):
         getattr(edited, name).clear()
     durations = sample_durations(acq)
-    for group in groups:
+    for group in plan.groups:
         first, last = group[0], group[-1]
         weights = [durations[i] for i in group]
         edited.index.append(acq.index[first])
@@ -236,8 +256,7 @@ def resample(acq: Acquisition, sections: Sequence[Section]) -> Acquisition:
         edited.interpolated.append(any(acq.interpolated[i] for i in group) if acq.interpolated else False)
 
     zero = _zero(acq)
-    for k, (section, count) in enumerate(zip(sections, counts)):
-        before = sum(1 for t in sample_times(acq) if _section_of(sections, t) == k)
+    for section, count, before in zip(sections, plan.counts, plan.before):
         if count != before:
             edited.edits.append(f"resampled {section.start - zero:.1f} s to {section.end - zero:.1f} s "
                                 f"every {section.period:g} s: {before} samples into {count}")

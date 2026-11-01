@@ -422,7 +422,6 @@ class Model:
         from twilite.editing import cut
 
         self._replaceData(cut(self._editable(), start, end, nAverage))
-        return True
 
     def samplingSections(self):
         """How the loaded data is sampled: ``[(start, end, period)]``, PC times and seconds."""
@@ -431,11 +430,14 @@ class Model:
         return [(s.start, s.end, s.period) for s in sampling_sections(self._editable())]
 
     def resamplePreview(self, sections):
-        """What :meth:`resample` would make: ``(t, coincidences, samples per section, problems)``.
+        """What :meth:`resample` would make, as a dict:
 
-        Only the merged samples are returned, the others stay as they are; NaN separates
-        runs of them. ``problems`` says why each section cannot be applied (``""`` if it
-        can); such a section is left out of the preview and its count is None.
+        - ``t``, ``coincidences``: arrays of the merged samples only, the others stay as
+          they are; NaN separates runs of them.
+        - ``counts``: samples per section, None for a section that cannot be applied.
+        - ``problems``: why each section cannot be applied, ``""`` if it can. Such a
+          section is left out of the preview.
+        - ``changes``: whether applying the sections that can be would change the data.
         """
         from twilite.editing import plan_resample, resample, section_problems
         from twilite.storage import sample_times
@@ -444,36 +446,35 @@ class Model:
         sections = self._sections(sections)
         problems = section_problems(acq, sections)
         valid = [s for s, problem in zip(sections, problems) if not problem]
-        edited = resample(acq, valid)
-        groups, validCounts = plan_resample(acq, valid)
-        validCounts = iter(validCounts)
+        plan = plan_resample(acq, valid)
+        edited = resample(acq, valid, plan)
+        validCounts = iter(plan.counts)
         counts = [None if problem else next(validCounts) for problem in problems]
         t, values = [], []
-        for group, tSample, value in zip(groups, sample_times(edited), edited.coincidences):
+        for group, tSample, value in zip(plan.groups, sample_times(edited), edited.coincidences):
             if len(group) > 1:
                 t.append(tSample)
                 values.append(value)
             elif values and not math.isnan(values[-1]):
                 t.append(t[-1])
                 values.append(math.nan)
-        return np.array(t), np.array(values, dtype=float), counts, problems
+        return {"t": np.array(t), "coincidences": np.array(values, dtype=float), "counts": counts,
+                "problems": problems, "changes": plan.changes}
 
     def resample(self, sections):
         """Resample the loaded data; ``sections`` is ``[(start, end, period)]``, PC times and seconds.
 
-        Returns False, leaving the data as it is, when every section keeps its samples.
-
         Raises:
-            ValueError: The sections are invalid.
+            ValueError: The sections are invalid, or would change nothing.
         """
-        from twilite.editing import resample
+        from twilite.editing import plan_resample, resample
 
         acq = self._editable()
-        edited = resample(acq, self._sections(sections))
-        if len(edited.edits) == len(acq.edits):
-            return False
-        self._replaceData(edited)
-        return True
+        sections = self._sections(sections)
+        plan = plan_resample(acq, sections)
+        if not plan.changes:
+            raise ValueError("Nothing to resample: every section keeps its samples")
+        self._replaceData(resample(acq, sections, plan))
 
     def hasUnsavedEdits(self):
         return self.unsavedEdits

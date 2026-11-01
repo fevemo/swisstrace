@@ -26,10 +26,6 @@ def make(n=20, period=1.0, jitter=0.0, rate=lambda i: 100.0 + i):
     return acq
 
 
-def at(acq, i):
-    return acq.t_wall[i]
-
-
 ###############################################################################
 # Cutting                                                                     #
 ###############################################################################
@@ -37,7 +33,7 @@ def at(acq, i):
 
 def test_cut_draws_a_line_between_the_edges():
     acq = make(rate=lambda i: 1000.0 if i in (8, 9, 10) else 100.0 + i)
-    edited = cut(acq, at(acq, 8) - 0.2, at(acq, 10) + 0.2)
+    edited = cut(acq, acq.t_wall[8] - 0.2, acq.t_wall[10] + 0.2)
     # Edges: sample 7 (107) and sample 11 (111), 4 samples apart.
     assert edited.coincidences[7:12] == pytest.approx([107, 108, 109, 110, 111])
     assert edited.singles1[8] == pytest.approx(1080) and edited.singles2[10] == pytest.approx(2200)
@@ -49,7 +45,7 @@ def test_cut_draws_a_line_between_the_edges():
 
 def test_cut_edges_average_n_samples_at_the_edge_sample_time():
     acq = make(rate=lambda i: {5: 90.0, 6: 110.0, 10: 500.0, 11: 300.0}.get(i, 100.0))
-    plan = plan_cut(acq, at(acq, 7), at(acq, 9), n_average=2)
+    plan = plan_cut(acq, acq.t_wall[7], acq.t_wall[9], n_average=2)
     assert plan.selected == [7, 8, 9]
     # Left edge mean(90, 110) = 100 at sample 6, right edge mean(500, 300) = 400 at sample 10.
     assert plan.values["coincidences"] == pytest.approx([175, 250, 325])
@@ -59,13 +55,13 @@ def test_cut_edges_average_n_samples_at_the_edge_sample_time():
 def test_cut_edge_mean_is_weighted_by_duration_and_skips_nan():
     acq = make(rate=lambda i: {3: math.nan, 4: 400.0, 5: 100.0}.get(i, 100.0))
     acq.duration_s[4] = 3.0
-    plan = plan_cut(acq, at(acq, 6), at(acq, 6), n_average=3)
+    plan = plan_cut(acq, acq.t_wall[6], acq.t_wall[6], n_average=3)
     assert plan.values["coincidences"][0] == pytest.approx(((400 * 3 + 100) / 4 + 100) / 2)
 
 
 def test_cut_at_the_end_holds_the_other_side():
     acq = make()
-    edited = cut(acq, at(acq, 17), at(acq, 19) + 5, n_average=2)
+    edited = cut(acq, acq.t_wall[17], acq.t_wall[19] + 5, n_average=2)
     assert edited.coincidences[17:] == pytest.approx([115.5] * 3)
 
 
@@ -102,24 +98,24 @@ def test_resample_merges_samples_and_keeps_the_counts():
 
 def test_resample_last_sample_of_a_section_is_shorter():
     acq = make(n=25)
-    groups, counts = plan_resample(acq, [Section(T0, acq.t_wall[-1], 10.0)])
-    assert [len(g) for g in groups] == [10, 10, 5] and counts == [3]
+    plan = plan_resample(acq, [Section(T0, acq.t_wall[-1], 10.0)])
+    assert [len(g) for g in plan.groups] == [10, 10, 5] and plan.counts == [3] and plan.before == [25]
     assert resample(acq, [Section(T0, acq.t_wall[-1], 10.0)]).duration_s == pytest.approx([10, 10, 5])
 
 
 def test_resample_tolerates_clock_jitter():
     acq = make(n=100, jitter=0.002)  # reports drift by 2 ms each
-    groups, _ = plan_resample(acq, [Section(T0, acq.t_wall[-1], 10.0)])
+    groups = plan_resample(acq, [Section(T0, acq.t_wall[-1], 10.0)]).groups
     assert {len(g) for g in groups} == {10}
-    same, _ = plan_resample(acq, [Section(T0, acq.t_wall[-1], 1.0)])
-    assert len(same) == 100
+    same = plan_resample(acq, [Section(T0, acq.t_wall[-1], 1.0)])
+    assert len(same.groups) == 100 and not same.changes
 
 
 def test_resample_does_not_bridge_a_gap():
     acq = make(n=20)
     for i in range(10, 20):
         acq.t_wall[i] += 3.0  # the connection was lost for 3 s
-    groups, _ = plan_resample(acq, [Section(T0, acq.t_wall[-1], 6.0)])
+    groups = plan_resample(acq, [Section(T0, acq.t_wall[-1], 6.0)]).groups
     assert [len(g) for g in groups] == [6, 4, 6, 4]
 
 
@@ -131,7 +127,8 @@ def test_resample_samples_outside_every_section_stay():
 
 
 def test_resample_twice_and_interpolated_flags_carry_over():
-    acq = cut(make(n=40), at(make(n=40), 3), at(make(n=40), 3))
+    raw = make(n=40)
+    acq = cut(raw, raw.t_wall[3], raw.t_wall[3])
     once = resample(acq, [Section(T0, acq.t_wall[-1], 5.0)])
     twice = resample(once, [Section(T0, once.t_wall[-1], 20.0)])
     assert len(once) == 8 and len(twice) == 2
@@ -168,8 +165,8 @@ def test_resample_period_fits_every_sampling_in_the_section():
         plan_resample(acq, [Section(T0, T0 + 40, 15.0)])
     with pytest.raises(ValueError, match="sampled every 10 s"):
         plan_resample(acq, [Section(T0, T0 + 40, 5.0)])
-    groups, counts = plan_resample(acq, [Section(T0, T0 + 40, 10.0)])
-    assert counts == [4] and [len(g) for g in groups] == [10, 10, 1, 1]
+    plan = plan_resample(acq, [Section(T0, T0 + 40, 10.0)])
+    assert plan.counts == [4] and [len(g) for g in plan.groups] == [10, 10, 1, 1]
     # A section's last sample, cut short, does not count as its sampling.
     odd = resample(make(n=21), [Section(T0, T0 + 21, 2.0)])
     assert odd.duration_s[-1] == pytest.approx(1.0)
@@ -200,7 +197,7 @@ def test_sampling_sections():
 
 def test_edited_data_survives_a_file(tmp_path):
     acq = make(n=25)
-    edited = resample(cut(acq, at(acq, 2), at(acq, 3)), [Section(T0 + 6, T0 + 25, 10.0)])
+    edited = resample(cut(acq, acq.t_wall[2], acq.t_wall[3]), [Section(T0 + 6, T0 + 25, 10.0)])
     back = read_acquisition(write_acquisition(edited, tmp_path / "edited.csv"))
     assert back.coincidences == pytest.approx(edited.coincidences)
     assert back.duration_s == pytest.approx(edited.duration_s)
