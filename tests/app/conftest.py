@@ -3,6 +3,9 @@
 import importlib.util
 import logging
 import math
+import shutil
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -18,8 +21,16 @@ APP_DIR = Path(__file__).resolve().parents[2] / "apps" / "twiliteacq"
 
 
 def load_app_module(name):
-    """Import ``apps/twiliteacq/<name>.py`` without EINstudio's launcher."""
-    spec = importlib.util.spec_from_file_location(f"twiliteacq_{name}", APP_DIR / f"{name}.py")
+    """Import ``apps/twiliteacq/<name>.py`` without EINstudio's launcher.
+
+    As in EINstudio, the module is in package ``twiliteacq``, the app folder, so that the
+    app's own imports (``from . import locations``) resolve.
+    """
+    if "twiliteacq" not in sys.modules:
+        package = types.ModuleType("twiliteacq")
+        package.__path__ = [str(APP_DIR)]
+        sys.modules["twiliteacq"] = package
+    spec = importlib.util.spec_from_file_location(f"twiliteacq.{name}", APP_DIR / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -58,6 +69,13 @@ def make_instrument_config(data_dir, **overrides):
     return {"twilite": config}
 
 
+def copy_instrument_config(directory):
+    """A copy of the app's instrumentConfig.yaml for the Settings window to save to; return its path."""
+    path = directory / "instrumentConfig.yaml"
+    shutil.copyfile(APP_DIR / "instrumentConfig.yaml", path)
+    return str(path)
+
+
 @pytest.fixture
 def model_factory(tmp_path):
     Model = load_app_module("model").Model
@@ -65,6 +83,7 @@ def model_factory(tmp_path):
 
     def factory(**overrides):
         model = Model(logging.getLogger("twiliteacq.test"), make_instrument_config(tmp_path / "data", **overrides))
+        model.INSTRUMENT_CONFIG_FILE = copy_instrument_config(tmp_path)
         models.append(model)
         return model
 

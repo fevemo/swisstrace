@@ -13,9 +13,9 @@ from qfluentwidgets import InfoBar, InfoBarPosition, MessageBox, PushButton, Tab
 from einstudio.tools.einview import EINview
 from einstudio.tools.styleengine import StyleEngine
 from einstudio.widgets import (
-    EINbodyLabel, EINbutton, EINcaptionLabel, EINcheckBox, EINdialog, EINdocWidget, EINdoubleSpinBox, EINdropDown,
-    EINhBoxLayout, EINlineEdit, EINlogDisplayWidget, EINoptionRow, EINplotWidget, EINspinBox, EINstatusLight,
-    EINtitleLabel, EINvBoxLayout,
+    EINbodyLabel, EINbutton, EINcaptionLabel, EINcardWidget, EINcheckBox, EINdialog, EINdocWidget, EINdoubleSpinBox,
+    EINdropDown, EINhBoxLayout, EINlineEdit, EINlogDisplayWidget, EINnavItem, EINoptionRow, EINplotWidget,
+    EINspinBox, EINstatusLight, EINswitch, EINtitleLabel, EINvBoxLayout,
 )
 
 CUSTOM_ISOTOPE = "Custom"
@@ -106,6 +106,7 @@ class View(EINview):
             # Log page
             ('logDisplayWidget',      EINlogDisplayWidget),
             ('docView',               EINdocWidget),
+            ('settingsNavItem',       EINnavItem),
         ]
 
     ###############################################################################
@@ -120,6 +121,7 @@ class View(EINview):
         host, port, _ = self.viewModel.defaultAddress()
         w.hostEdit.setText(host)
         w.portSpin.setValue(port)
+        self._enableAddress()
         w.sampleRateDropdown.setCurrentText("1")
         w.durationSpin.setValue(60.0)
         w.durationSpin.setEnabled(False)
@@ -160,9 +162,9 @@ class View(EINview):
 
         self._makeCorrectionPlot()
         self._refreshCorrectionPlot()  # shows "-" as the measured background until data is loaded
+        self._updateEditButtons()
 
         indexFile = os.path.join(self.configManager.mainConfig.docPath, "index.html")
-        self._updateEditButtons()
         if os.path.isfile(indexFile):
             w.docView.updateHTML(QUrl.fromLocalFile(os.path.abspath(indexFile)).toString())
 
@@ -173,6 +175,7 @@ class View(EINview):
     def bindWidgetsActions(self):
         w = self.widgets
         w.connectButton.clicked.connect(self._onConnectClicked)
+        w.settingsNavItem.clicked.connect(self._openSettings)
         w.runButton.clicked.connect(self._onRunClicked)
         w.endModeDropdown.currentTextChanged.connect(lambda text: w.durationSpin.setEnabled(text == "Time"))
         w.markButton.clicked.connect(self._onMark)
@@ -248,11 +251,18 @@ class View(EINview):
         else:
             self.viewModel.connect(self.widgets.hostEdit.text().strip(), self.widgets.portSpin.value())
 
+    def _enableAddress(self):
+        """The address is the device's: it can be changed only while disconnected and not simulating."""
+        w = self.widgets
+        simulating = self.viewModel.isSimulating()
+        for field in (w.hostEdit, w.portSpin):
+            field.setEnabled(not self.viewModel.isConnected() and not simulating)
+            field.setToolTip("A simulated twilite is used: turn it off in Settings" if simulating else "")
+
     def _onConnectionChanged(self, connected):
         w = self.widgets
         w.connectButton.setText("Disconnect" if connected else "Connect")
-        w.hostEdit.setEnabled(not connected)
-        w.portSpin.setEnabled(not connected)
+        self._enableAddress()
         w.runButton.setEnabled(connected or self.viewModel.isAcquiring())
         if not connected:
             self._onStatusChanged("disconnected", "Disconnected")
@@ -401,6 +411,8 @@ class View(EINview):
         self.handles.sectionLines = []
         self.handles.cutting = False
         self.handles.resampleDialog = None
+        # The resample window shows (set when it shows or hides, so true in its hide event too).
+        self.handles.resampling = False
         # In cut mode a left drag selects samples instead of panning.
         self.handles.dragPlot = item.vb.mouseDragEvent
         item.vb.mouseDragEvent = self._onCorrectionPlotDragged
@@ -411,8 +423,6 @@ class View(EINview):
         self.handles.selectingPetStart = False
         # The "Fixed value" background, kept while the field shows the measured mean.
         self.handles.fixedBackground = 0.0
-        # The resample window shows (set when it shows or hides, so true in its hide event too).
-        self.handles.resampling = False
 
     def _onUseCurrentData(self):
         if self._confirmDiscardEdits("Load the current acquisition"):
@@ -936,7 +946,8 @@ class View(EINview):
     def _onStateRestored(self, state):
         w = self.widgets
         setters = {
-            "host": w.hostEdit.setText, "port": w.portSpin.setValue, "qrate": lambda n: w.sampleRateDropdown.setCurrentText(f"{n / 10:g}"),
+            "host": w.hostEdit.setText, "port": w.portSpin.setValue,
+            "qrate": lambda n: w.sampleRateDropdown.setCurrentText(f"{n / 10:g}"),
             "endMode": w.endModeDropdown.setCurrentText, "duration_min": w.durationSpin.setValue,
             "isotope": w.isotopeDropdown.setCurrentText, "backgroundMode": w.backgroundModeDropdown.setCurrentIndex,
             "calibrationFactor": w.cfSpin.setValue,
@@ -964,6 +975,24 @@ class View(EINview):
             "calibrationFactor": w.cfSpin.value(), "showCoincidences": w.showCoincidencesCheck.isChecked(),
             "showSingles1": w.showSingles1Check.isChecked(), "showSingles2": w.showSingles2Check.isChecked(),
         }
+
+    def _openSettings(self):
+        w = self.widgets
+        vm = self.viewModel
+        if vm.isConnected() or vm.isAcquiring():
+            self._notify("warning", "Settings", "Disconnect before changing the settings.")
+            return
+        settings = vm.instrumentSettings()
+        # The address as entered in the Connection card, which the next connection uses.
+        settings["twilite"].update(host=w.hostEdit.text().strip(), port=w.portSpin.value())
+        dialog = SettingsDialog(self, settings, vm.simulatorScenarios(), list(vm.isotopeTable()),
+                                vm.defaultDataDir(), vm.saveInstrumentSettings)
+        if dialog.exec():
+            config = vm.instrumentSettings()["twilite"]
+            w.hostEdit.setText(config["host"])
+            w.portSpin.setValue(config["port"])
+            self._enableAddress()
+            self._notify("success", "Settings saved", "They apply from the next connection.")
 
     def closeEvent(self, event):
         if not self._confirmDiscardEdits("Close"):
@@ -1191,3 +1220,134 @@ def _parseTime(text, near=None):
     day = datetime.fromtimestamp(near).date()
     candidates = [datetime.combine(day + timedelta(days=d), clock).timestamp() for d in (-1, 0, 1)]
     return min(candidates, key=lambda t: abs(t - near))
+
+
+class SettingsDialog(EINdialog):
+    """The settings of ``instrumentConfig.yaml``; Save uses them and writes them to the file.
+
+    Modal. The simulator's settings show only while the simulator is on, the address
+    only while it is off.
+
+    Args:
+        mainWindow: The View.
+        settings: ``{"twilite": {...}}``, as :meth:`ViewModel.instrumentSettings` gives them.
+        scenarios: The simulator's scenarios.
+        isotopes: The isotopes the simulator can count.
+        defaultDataDir: The data folder used when the field is left empty.
+        save: Saves ``{"twilite": {...}}``; returns a false value if it could not.
+    """
+
+    def __init__(self, mainWindow, settings, scenarios, isotopes, defaultDataDir, save):
+        super().__init__(mainWindow, "Settings")
+        self._save = save
+        config = settings["twilite"]
+        sim = config["simulator"]
+
+        self.simulateSwitch = EINswitch()
+        self.simulateSwitch.setChecked(config["simulate"])
+        self.hostEdit = EINlineEdit(length="med")
+        self.hostEdit.setText(config["host"])
+        self.portSpin = _spinBox(EINspinBox(length="vshort"), 1, 65535, config["port"])
+        self.timeoutSpin = _spinBox(EINdoubleSpinBox(length="short"), 0.5, 120.0, config["timeout_s"], decimals=1)
+        self.reconnectSpin = _spinBox(EINspinBox(length="vshort"), 0, 20, config["reconnectAttempts"])
+
+        self.scenarioDropdown = EINdropDown(length="long")
+        self.scenarioDropdown.addItems(scenarios)
+        self.scenarioDropdown.setCurrentText(sim["scenario"])
+        self.isotopeDropdown = EINdropDown(length="short")
+        self.isotopeDropdown.addItems(isotopes)
+        self.isotopeDropdown.setCurrentText(sim["isotope"])
+        self.idleTimeoutSpin = _spinBox(EINdoubleSpinBox(length="short"), 0.0, 600.0, sim["idleTimeout_s"], decimals=1)
+        self.simulatorPortSpin = _spinBox(EINspinBox(length="short"), 0, 65535, sim["port"])
+
+        self.dataDirEdit = EINlineEdit(length="vlong")
+        self.dataDirEdit.setMinimumWidth(320)
+        self.dataDirEdit.setText(config["dataDir"])
+        self.dataDirEdit.setPlaceholderText(defaultDataDir)
+        browseButton = EINbutton("Browse...", length="short")
+        browseButton.clicked.connect(self._browseDataDir)
+        self.rawLogSwitch = EINswitch()
+        self.rawLogSwitch.setChecked(config["rawLog"])
+
+        device = EINcardWidget("Device")
+        device.addRow(_settingsRow("Simulated twilite", "A twilite simulated by the app, to try it without the device",
+                                   self.simulateSwitch))
+        self.addressRow = device.addRow(_settingsRow("Address", "The twilite's IP address and port",
+                                                     self.hostEdit, self.portSpin))
+        device.addRow(_settingsRow("Timeout (s)", "Without an answer for this long, the connection counts as lost",
+                                   self.timeoutSpin))
+        device.addRow(_settingsRow("Reconnect attempts", "Tried after a lost connection during an acquisition",
+                                   self.reconnectSpin))
+        self.simulatorCard = EINcardWidget("Simulator")
+        self.simulatorCard.addRow(_settingsRow("Scenario", "What the simulated twilite measures",
+                                               self.scenarioDropdown))
+        self.simulatorCard.addRow(_settingsRow("Isotope", "Its decay in the simulated counts", self.isotopeDropdown))
+        self.simulatorCard.addRow(_settingsRow("Idle timeout (s)", "Drops an idle connection, as the device does; "
+                                               "0: never", self.idleTimeoutSpin))
+        self.simulatorCard.addRow(_settingsRow("Port", "0: any free port", self.simulatorPortSpin))
+        data = EINcardWidget("Data")
+        data.addRow(_settingsRow("Data folder", "Where the acquisitions are saved; empty: the folder shown",
+                                 self.dataDirEdit, browseButton))
+        data.addRow(_settingsRow("Raw device logs", "Keep every byte exchanged with the device, for problem reports",
+                                 self.rawLogSwitch))
+
+        cancelButton = EINbutton("Cancel", length="short")
+        saveButton = EINbutton("Save", role="primary", length="short")
+        cancelButton.clicked.connect(self.reject)
+        saveButton.clicked.connect(self._onSaveClicked)
+        self.simulateSwitch.checkedChanged.connect(self._showSimulatorSettings)
+
+        spacing = StyleEngine.px("section_spacing_px")
+        content = QWidget(self)
+        column = EINvBoxLayout(content, spacing=spacing)
+        column.setContentsMargins(spacing, spacing, spacing, spacing)
+        for card in (device, self.simulatorCard, data):
+            column.addWidget(card)
+        column.addStretch(1)
+        buttons = EINhBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(cancelButton)
+        buttons.addWidget(saveButton)
+        column.addLayout(buttons)
+        self.layout.addWidget(content)
+        self._showSimulatorSettings(self.simulateSwitch.isChecked())
+        self.resize(720, 0)
+
+    def settings(self):
+        return {"twilite": {
+            "host": self.hostEdit.text().strip(), "port": self.portSpin.value(), "timeout_s": self.timeoutSpin.value(),
+            "reconnectAttempts": self.reconnectSpin.value(), "dataDir": self.dataDirEdit.text().strip(),
+            "rawLog": self.rawLogSwitch.isChecked(), "simulate": self.simulateSwitch.isChecked(),
+            "simulator": {"scenario": self.scenarioDropdown.currentText(), "isotope": self.isotopeDropdown.currentText(),
+                          "idleTimeout_s": self.idleTimeoutSpin.value(), "port": self.simulatorPortSpin.value()},
+        }}
+
+    def _showSimulatorSettings(self, simulate):
+        self.addressRow.setVisible(not simulate)
+        self.simulatorCard.setVisible(simulate)
+        self.adjustSize()
+
+    def _browseDataDir(self):
+        start = self.dataDirEdit.text().strip() or self.dataDirEdit.placeholderText()
+        path = QFileDialog.getExistingDirectory(self, "Data folder", os.path.expanduser(start))
+        if path:
+            self.dataDirEdit.setText(path)
+
+    def _onSaveClicked(self):
+        if self._save(self.settings()):
+            self.accept()
+
+
+def _spinBox(spinBox, minimum, maximum, value, decimals=None):
+    if decimals is not None:
+        spinBox.setDecimals(decimals)
+    spinBox.setRange(minimum, maximum)
+    spinBox.setValue(value)
+    return spinBox
+
+
+def _settingsRow(title, description, *widgets):
+    row = EINoptionRow(title, description)
+    for widget in widgets:
+        row.addTrailingWidget(widget)
+    return row

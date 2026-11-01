@@ -7,7 +7,8 @@ Acquisition
 1. Check that the PC clock is synchronised with the PET scanner: every sample is
    timestamped with it, as in PSAMPLE.
 2. On the *Acquisition* page, enter the twilite's IP address and port and press
-   **Connect**. The status light turns green.
+   **Connect**. The status light turns green. With *Simulated twilite* on in **Settings**,
+   the app connects to a twilite it simulates instead, and the address is not used.
 3. Choose the **Sample rate**: one sample every 0.1, 1, 2, 5 or 10 s. Each sample counts
    over that period and is given in counts per second, so a short period follows fast
    changes but is noisier: at 0.1 s the counts come in steps of 10 cps.
@@ -20,7 +21,8 @@ Acquisition
    plot and is stored with the acquisition.
 6. Press **Stop**. The file name appears in a message.
 
-Each acquisition is written to ``data/YYYYMMDD_HHMMSS_twilite.csv`` as it runs, one
+Each acquisition is written to ``YYYYMMDD_HHMMSS_twilite.csv`` in the data folder
+(*dataDir*, see :doc:`settings`) as it runs, one
 line per sample, so a crash loses nothing. A file that did not end cleanly keeps the
 name ``*.partial.csv``; the app offers to recover it at the next start.
 

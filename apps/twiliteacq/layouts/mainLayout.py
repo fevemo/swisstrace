@@ -5,7 +5,7 @@ from einstudio.layouts import EINdocPage, EINnavbarLayout, EINpage, EINstackPage
 from einstudio.tools.styleengine import StyleEngine
 from einstudio.widgets import (
     EINbodyLabel, EINbutton, EINcaptionLabel, EINcardWidget, EINcheckBox, EINdoubleSpinBox, EINdropDown,
-    EINhBoxLayout, EINlineEdit, EINlogDisplayWidget, EINoptionRow, EINplotWidget, EINspinBox, EINstatusLight,
+    EINhBoxLayout, EINlineEdit, EINlogDisplayWidget, EINnavItem, EINoptionRow, EINplotWidget, EINspinBox, EINstatusLight,
     EINtitleLabel, EINvBoxWidget, asCard,
 )
 
@@ -51,7 +51,8 @@ class MainWidget(EINnavbarLayout):
         The calibration run's plot, full width
         "Calibration run" | "Calibration factor"
     Page "Log": the log
-    Page "Docs" (at the bottom of the bar): the manual built from doc/source
+    At the bottom of the bar: "Settings", which opens the Settings window (not a page),
+    and page "Docs", the manual built from doc/source
     """
 
     def __init__(self, options=None, instrumentConfig=None):
@@ -61,6 +62,10 @@ class MainWidget(EINnavbarLayout):
         self._makeCorrectionPage()
         self._makeCalibrationPage()
         self._makeLogPage()
+        # Not a page: the View opens the Settings window when it is clicked.
+        settingsItem = _named(EINnavItem(FluentIcon.SETTING, "Settings", isSelectable=False), "settingsNavItem")
+        self.navigationInterface.addWidget("settings", settingsItem, position=NavigationItemPosition.BOTTOM,
+                                           tooltip="Settings")
         self.addPage(EINdocPage(docName="docView"), FluentIcon.HELP, "Docs", NavigationItemPosition.BOTTOM)
 
     ###############################################################################

@@ -367,6 +367,26 @@ class ViewModel(QObject):
     def defaultAddress(self):
         return self.model.host, self.model.port, self.model.simulate
 
+    def isSimulating(self):
+        return self.model.simulate
+
+    def instrumentSettings(self):
+        return self.model.instrumentSettings()
+
+    def defaultDataDir(self):
+        return self.model.defaultDataDir()
+
+    def simulatorScenarios(self):
+        return self.model.simulatorScenarios()
+
+    def saveInstrumentSettings(self, settings):
+        """Use and save the settings; return the file, or None (with an error) if they were not saved."""
+        try:
+            return self.model.saveInstrumentSettings(settings)
+        except (ValueError, OSError) as error:
+            self.errorOccurred.emit(f"Settings not saved: {error}")
+            return None
+
     def dataDir(self):
         return self.model.dataDir
 

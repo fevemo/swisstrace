@@ -9,7 +9,9 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("einstudio")
 
-from tests.app.conftest import APP_DIR, load_app_module, make_instrument_config, write_step_run  # noqa: E402
+from tests.app.conftest import (  # noqa: E402
+    APP_DIR, copy_instrument_config, load_app_module, make_instrument_config, write_step_run,
+)
 
 pytestmark = pytest.mark.app
 
@@ -33,6 +35,7 @@ def window(qapp, qtbot, tmp_path, monkeypatch):
     instrumentConfig = make_instrument_config(tmp_path / "data")
     model = Model(logger, instrumentConfig)
     model.STATE_FILE = str(tmp_path / "state.yaml")
+    model.INSTRUMENT_CONFIG_FILE = copy_instrument_config(tmp_path)
     viewModel = ViewModel(model, logger)
     layoutManager = LayoutManager(configManager.mainConfig.layoutFile, logger,
                                   options=configManager.options, instrumentConfig=instrumentConfig)
@@ -176,6 +179,29 @@ def test_connect_acquire_for_five_seconds_and_close(qtbot, window, tmp_path, mon
     state = (tmp_path / "state.yaml").read_text()
     assert "background: 150.0" in state  # the fixed value, not the mean
     assert "qrate: 1\n" in state  # 0.1 s
+
+
+def test_settings_window(qtbot, window, monkeypatch):
+    import sys
+
+    w = window.widgets
+    vm = window.viewModel
+    assert not w.hostEdit.isEnabled()  # simulate: true in the config
+
+    def editAndSave(dialog):
+        assert dialog.simulatorCard.isVisibleTo(dialog) and not dialog.addressRow.isVisibleTo(dialog)
+        dialog.simulateSwitch.setChecked(False)
+        assert dialog.addressRow.isVisibleTo(dialog) and not dialog.simulatorCard.isVisibleTo(dialog)
+        dialog.hostEdit.setText("10.0.0.9")
+        dialog.reconnectSpin.setValue(5)
+        dialog._onSaveClicked()
+        return dialog.result()
+
+    monkeypatch.setattr(sys.modules[type(window).__module__].SettingsDialog, "exec", editAndSave)
+    w.settingsNavItem.clicked.emit(True)
+    assert not vm.isSimulating() and vm.model.reconnectAttempts == 5
+    assert w.hostEdit.text() == "10.0.0.9" and w.hostEdit.isEnabled()
+    assert "reconnectAttempts: 5" in open(vm.model.INSTRUMENT_CONFIG_FILE, encoding="utf-8").read()
 
 
 def test_cut_resample_and_save_edited_data(qtbot, window, tmp_path, monkeypatch):

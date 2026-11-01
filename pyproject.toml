@@ -24,6 +24,9 @@ dev = [
 docs = [
     "einstudio[docs]>=0.3.0",
 ]
+packaging = [
+    "briefcase>=0.4.7",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -32,3 +35,37 @@ markers = [
     "simulator_only: uses fault injection, which only the simulator supports",
     "app: needs Qt and EINstudio",
 ]
+
+# Installers for testers and users: a .dmg on macOS, an .msi on Windows.
+# Build with `uv run --group packaging python scripts/build_installer.py`.
+[tool.briefcase]
+project_name = "pysample"
+# The app's identifier is <bundle>.<app name>: ch.swisstrace.twilite.pysample.
+bundle = "ch.swisstrace.twilite"
+version = "0.1.0"
+author = "Felipe Velasquez Moros"
+license = "GPL-3.0-or-later"
+
+[tool.briefcase.app.pysample]
+formal_name = "Twilite Acquisition"
+description = "Acquisition and correction for the Swisstrace twilite blood sampler"
+# Briefcase names the app's package after the app, so the script copies apps/twiliteacq
+# to build/installer-src/pysample, and Briefcase runs `python -m pysample`, i.e. its
+# __main__.py. The manual (built by the script) lands beside it as `html`, where main.py
+# looks for it.
+sources = ["build/installer-src/pysample", "doc/build/html"]
+requires = ["./packages/twilite", "einstudio>=0.3.0", "numpy>=2.0"]
+# The script writes the constraints from uv.lock, so the installer has the tested versions.
+requirement_installer_args = [
+    "--extra-index-url", "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple",
+    "--constraint", "./build/installer-constraints.txt",
+]
+# pyobjc-core ships its own test suite, 140 compiled modules nothing imports, which would
+# only add to the signing and the download.
+cleanup_paths = ["**/app_packages/PyObjCTest"]
+
+[tool.briefcase.app.pysample.macOS]
+# scipy (through pyqt6-fluent-widgets) and Qt 6.11 have no wheels for older macOS.
+min_os_version = "13.0"
+# Shown in macOS's "find devices on your local network" prompt, at the first connection.
+info."NSLocalNetworkUsageDescription" = "Twilite Acquisition connects to the twilite blood sampler on your network."

@@ -1,5 +1,7 @@
+import json
 import math
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -8,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 import yaml
+
+from . import locations
 
 
 class Model:
@@ -18,20 +22,14 @@ class Model:
     imported inside :meth:`connect`, so the app starts even when it is missing.
     """
 
-    STATE_FILE = "state.yaml"
+    STATE_FILE = str(locations.stateFile())
+    # Where the Settings window saves the instrument settings.
+    INSTRUMENT_CONFIG_FILE = str(locations.instrumentConfigFile())
 
     def __init__(self, logger, instrumentConfig):
         self.logger = logger
-        config = instrumentConfig["twilite"]
-        self.host = config["host"]
-        self.port = config["port"]
-        self.timeout_s = config.get("timeout_s", 5.0)
-        self.reconnectAttempts = config.get("reconnectAttempts", 3)
-        self.dataDir = os.path.abspath(config.get("dataDir", "data"))
-        self.rawLog = config.get("rawLog", True)
-        self.simulate = config.get("simulate", False)
-        self.simulatorConfig = config.get("simulator", {})
-        self.appVersion = config.get("appVersion", "0.1.0")
+        self._readInstrumentConfig(instrumentConfig["twilite"])
+        self.appVersion = instrumentConfig["twilite"].get("appVersion", "0.1.0")
 
         self.client = None
         self.simulator = None
@@ -76,7 +74,7 @@ class Model:
             host, port = self.host, self.port
         rawLog = None
         if self.rawLog:
-            rawLog = os.path.join(self.dataDir, "rawlogs", datetime.now().strftime("%Y%m%d_%H%M%S") + "_raw.log")
+            rawLog = os.path.join(locations.rawLogDir(self.dataDir), datetime.now().strftime("%Y%m%d_%H%M%S") + "_raw.log")
         self.client = TwiliteClient(host, port, self.timeout_s, rawLog)
         banner = self.client.connect()
         self.logger.info(f"Connected to {host}:{port}: {banner.splitlines()[0] if banner else 'no banner'}")
@@ -625,6 +623,66 @@ class Model:
         return targetPath
 
     ###########################################################################
+    # Instrument settings (instrumentConfig.yaml)                             #
+    ###########################################################################
+
+    def _readInstrumentConfig(self, config):
+        self.host = config["host"]
+        self.port = config["port"]
+        self.timeout_s = config.get("timeout_s", 5.0)
+        self.reconnectAttempts = config.get("reconnectAttempts", 3)
+        self.dataDirSetting = config.get("dataDir") or ""
+        self.dataDir = os.path.abspath(os.path.expanduser(self.dataDirSetting or locations.defaultDataDir()))
+        self.rawLog = config.get("rawLog", True)
+        self.simulate = config.get("simulate", False)
+        self.simulatorConfig = dict(config.get("simulator") or {})
+
+    def instrumentSettings(self):
+        """The settings of ``instrumentConfig.yaml`` in use, in its layout: ``{"twilite": {...}}``."""
+        sim = self.simulatorConfig
+        return {"twilite": {
+            "host": self.host, "port": self.port, "timeout_s": self.timeout_s,
+            "reconnectAttempts": self.reconnectAttempts, "dataDir": self.dataDirSetting, "rawLog": self.rawLog,
+            "simulate": self.simulate,
+            "simulator": {"scenario": sim.get("scenario", "bolus"), "isotope": sim.get("isotope", "F-18"),
+                          "idleTimeout_s": sim.get("idleTimeout_s", 19.0), "port": sim.get("port", 0)},
+        }}
+
+    def defaultDataDir(self):
+        """The data folder used when the setting is empty."""
+        return str(locations.defaultDataDir())
+
+    def simulatorScenarios(self):
+        """The scenarios the simulator can play without a recorded session."""
+        from twilite.sim import SCENARIOS
+
+        return [name for name in SCENARIOS if name != "replay"]
+
+    def saveInstrumentSettings(self, settings):
+        """Use ``settings`` (as :meth:`instrumentSettings` gives them) and save them to the file.
+
+        Only while disconnected: the connection is made with the old ones. The file keeps
+        its comments; a simulator already started is stopped, to start again with the new
+        settings at the next connection.
+        """
+        if self.isConnected() or self.isAcquiring():
+            raise ValueError("Disconnect before changing the settings")
+        config = settings["twilite"]
+        if not str(config["host"]).strip():
+            raise ValueError("Enter the twilite's address")
+        self._readInstrumentConfig(config)
+        if self.simulator is not None:
+            self.simulator.stop()
+            self.simulator = None
+        path = self.INSTRUMENT_CONFIG_FILE
+        with open(path, encoding="utf-8") as file:
+            text = file.read()
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(_setYamlValues(text, settings))
+        self.logger.info(f"Settings saved to {path}")
+        return path
+
+    ###########################################################################
     # Settings between sessions                                               #
     ###########################################################################
 
@@ -638,5 +696,59 @@ class Model:
         return state
 
     def saveState(self, state):
+        os.makedirs(os.path.dirname(self.STATE_FILE) or ".", exist_ok=True)
         with open(self.STATE_FILE, "w", encoding="utf-8") as file:
             yaml.safe_dump(state, file, sort_keys=True)
+
+
+_YAML_LINE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z_]\w*):(?P<space> *)(?P<value>.*?)(?P<comment>\s+#.*)?$")
+
+
+def _flatten(values, prefix=()):
+    flat = {}
+    for key, value in values.items():
+        if isinstance(value, dict):
+            flat.update(_flatten(value, prefix + (key,)))
+        else:
+            flat[prefix + (key,)] = value
+    return flat
+
+
+def _setYamlValues(text, values):
+    """Return the YAML ``text`` with the values of ``values`` (nested dicts) put in.
+
+    Line by line, so the comments and the layout stay. If a key is missing or the
+    result does not read back as intended, the whole file is written out again instead,
+    without comments.
+    """
+    wanted = _flatten(values)
+    lines = text.splitlines(keepends=True)
+    sections = []  # [(indent, key)] of the sections around the current line
+    found = set()
+    for i, line in enumerate(lines):
+        match = _YAML_LINE.match(line.rstrip("\r\n"))
+        if match is None:
+            continue
+        indent = len(match["indent"])
+        while sections and sections[-1][0] >= indent:
+            sections.pop()
+        path = tuple(key for _, key in sections) + (match["key"],)
+        if not match["value"]:
+            sections.append((indent, match["key"]))
+        elif path in wanted:
+            ending = line[len(line.rstrip("\r\n")):]
+            lines[i] = (f"{match['indent']}{match['key']}:{match['space'] or ' '}{json.dumps(wanted[path])}"
+                        f"{match['comment'] or ''}{ending}")
+            found.add(path)
+    result = "".join(lines)
+    original = yaml.safe_load(text) or {}
+    expected = {**_flatten(original), **wanted}
+    if found == set(wanted) and _flatten(yaml.safe_load(result) or {}) == expected:
+        return result
+    merged = {}
+    for path, value in expected.items():
+        node = merged
+        for key in path[:-1]:
+            node = node.setdefault(key, {})
+        node[path[-1]] = value
+    return yaml.safe_dump(merged, sort_keys=False)

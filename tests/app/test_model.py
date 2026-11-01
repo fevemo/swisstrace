@@ -9,11 +9,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 from twilite import ConnectionLost, Sample
 from twilite.storage import AcquisitionWriter, read_acquisition
 
-from tests.app.conftest import APP_DIR, write_step_run
+from tests.app.conftest import APP_DIR, load_app_module, write_step_run
 
 
 def acquire_in_thread(model, qrate=1, endAfter_s=None):
@@ -41,11 +42,11 @@ def wait_for(condition, timeout=5.0):
 
 def test_model_never_imports_qt():
     code = (
-        "import sys, logging; sys.path.insert(0, r'%s'); import model; "
+        "import sys, logging; sys.path.insert(0, r'%s'); from twiliteacq import model; "
         "m = model.Model(logging.getLogger(), {'twilite': {'host': 'x', 'port': 1, 'simulate': True, "
         "'simulator': {}}}); m.connect(); m.shutdown(); "
         "assert not [n for n in sys.modules if n.startswith(('PyQt', 'qfluent', 'einstudio'))], 'Qt imported'"
-    ) % APP_DIR
+    ) % APP_DIR.parent
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
 
@@ -297,3 +298,34 @@ def test_editing_the_correction_data(model, tmp_path):
     model.setCorrection("F-18", start + 100, 120.0, 1.0)
     t, _, _ = model.correctData()
     assert t[-1] == pytest.approx(282.5 - 100)
+
+
+
+def test_settings_are_used_and_saved_with_the_comments(model):
+    path = model.INSTRUMENT_CONFIG_FILE
+    settings = model.instrumentSettings()
+    assert settings["twilite"]["simulate"] is True
+    model.connect()
+    with pytest.raises(ValueError, match="Disconnect"):
+        model.saveInstrumentSettings(settings)
+    model.disconnect()
+
+    config = settings["twilite"]
+    config.update(host="10.0.0.9", simulate=False, timeout_s=7.5, dataDir="~/twilite data")
+    config["simulator"]["scenario"] = "long-decay"
+    model.saveInstrumentSettings(settings)
+    assert (model.host, model.simulate, model.timeout_s) == ("10.0.0.9", False, 7.5)
+    assert model.dataDir == str(Path.home() / "twilite data")
+    assert model.simulator is None
+    text = Path(path).read_text(encoding="utf-8")
+    assert "# true: start a simulated twilite" in text  # the comments stay
+    assert yaml.safe_load(text)["twilite"] == config
+    assert model.instrumentSettings() == settings
+
+
+def test_yaml_values_replaced_in_place_or_written_out():
+    setValues = load_app_module("model")._setYamlValues
+    text = "a:\n  b: 1   # one\n  c:\n    d: 'x'\n"
+    assert setValues(text, {"a": {"b": 2, "c": {"d": "y # z"}}}) == 'a:\n  b: 2   # one\n  c:\n    d: "y # z"\n'
+    # A key the file does not have: written out again, without comments.
+    assert yaml.safe_load(setValues(text, {"a": {"e": True}})) == {"a": {"b": 1, "c": {"d": "x"}, "e": True}}

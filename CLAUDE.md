@@ -24,6 +24,7 @@ QT_QPA_PLATFORM=offscreen uv run pytest tests/app
 
 uv run python scripts/record_session.py <ip>    # record a raw device session (becomes a test fixture)
 uv run --group docs sphinx-build -b html doc/source doc/build/html   # manual, shown in the app's Docs page
+uv run --group packaging python scripts/build_installer.py         # .dmg (macOS) / .msi (Windows) via Briefcase, in dist/
 ```
 
 The README mentions `python install.py`, but that file does not exist; use `uv sync`.
@@ -41,6 +42,7 @@ Two layers, strictly separated:
   - `viewmodel.py`: `ViewModel(QObject)` — runs Model calls in worker threads (`runFuncInThread`), checks prerequisites and reports problems via `errorOccurred` instead of raising, throttles plot updates, drives keepalives while idle.
   - `view.py`: `View(EINview)` — `expectedWidgets` lists `(objectName, type)` pairs that must match the `objectName`s set in `layouts/mainLayout.py`; adding a control means updating both.
   - `instrumentConfig.yaml`: per-installation device settings (host, timeouts, `dataDir`, `rawLog`, `simulate` + simulator options).
+  - `locations.py`: where data, settings, state and logs go. From a checkout, the app folder (as always); installed (`__main__.py`, Briefcase's entry, sets `TWILITEACQ_INSTALLED=1`), the user's folders, since the bundle is read-only. `main.py` then overrides EINstudio's `logFile`, `instrumentConfigFile` and `docPath`. App modules import each other relatively (`from . import locations`): EINstudio and the tests load the app folder as a package named after the folder, which is `pysample` in the installer (Briefcase's app name, giving the identifier `ch.swisstrace.twilite.pysample`; `scripts/build_installer.py` copies the folder under that name).
 
 ## Protocol facts that shape the code
 

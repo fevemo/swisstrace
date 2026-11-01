@@ -16,6 +16,7 @@ calibration factor from a phantom run.
 .. toctree::
    :maxdepth: 2
 
+   installation
    usage
    settings
    code
