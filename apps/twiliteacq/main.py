@@ -25,18 +25,25 @@ from einstudio.tools.einapplication import EINApplication
 locations = importlib.import_module(os.path.basename(thisFileDir) + ".locations")
 
 
-def useUserFolders():
-    """Move the log, the device settings and the manual out of the installed, read-only app folder.
+def adaptConfig(installed):
+    """Adjust ``config.yaml`` where EINstudio reads it: the icon for this platform and,
+    installed, the folders.
 
-    EINstudio joins these ``config.yaml`` paths to the app folder, which leaves absolute
-    paths as they are; so override them where EINstudio reads ``config.yaml``.
+    On macOS the icon is the .icns, which has the margin of the other icons in the Dock.
+    Installed, the log, the device settings and the manual move out of the read-only app
+    folder: EINstudio joins these paths to the app folder, which leaves absolute paths as
+    they are.
     """
     mainConfigFile = os.path.join(thisFileDir, "config.yaml")
     loadConfig = ConfigManager.loadConfig
 
-    def loadMainConfigForInstall(path):
+    def loadMainConfig(path):
         config = loadConfig(path)
-        if os.path.normcase(os.path.abspath(path)) == os.path.normcase(mainConfigFile):
+        if os.path.normcase(os.path.abspath(path)) != os.path.normcase(mainConfigFile):
+            return config
+        if sys.platform == "darwin":
+            config.mainWindowIcon = os.path.join(thisFileDir, "icons", "icon.icns")
+        if installed:
             locations.logDir().mkdir(parents=True, exist_ok=True)
             config.logFile = str(locations.logDir() / "log.txt")
             config.instrumentConfigFile = str(locations.instrumentConfigFile())
@@ -44,11 +51,10 @@ def useUserFolders():
             config.docPath = os.path.join(os.path.dirname(thisFileDir), "html")
         return config
 
-    ConfigManager.loadConfig = staticmethod(loadMainConfigForInstall)
+    ConfigManager.loadConfig = staticmethod(loadMainConfig)
 
 
 if __name__ == '__main__':
-    if locations.installed():
-        useUserFolders()
+    adaptConfig(locations.installed())
     EINApplication(appDir=thisFileDir).launch()
     sys.exit(0)

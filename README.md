@@ -55,6 +55,7 @@ uv run python scripts/record_session.py 10.0.52.25
 ```bash
 uv run --group packaging python scripts/build_installer.py   # dist/*.dmg on macOS, dist/*.msi on Windows
 uv run --group packaging python scripts/build_installer.py --fresh   # reinstall all dependencies
+uv run python scripts/make_icons.py resources/icon.png   # app icon (apps/twiliteacq/icons/icon.icns, .ico) from a PNG
 ```
 
 Builds for the platform it runs on, with Briefcase (`[tool.briefcase]` in

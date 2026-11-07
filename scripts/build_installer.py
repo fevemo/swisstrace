@@ -15,6 +15,10 @@ sources into it (``briefcase update``), unless uv.lock, ``[tool.briefcase]`` or 
 Briefcase version changed since it was created: then, or with ``--fresh``, it is
 created again.
 
+On macOS, the Qt libraries the app does not load are removed from the bundle before it
+is signed (see ``remove_unused_qt``): PyQt6 ships all of Qt, and most of it (QML, 3D,
+multimedia, ...) is unused here.
+
 Without ``--identity`` the app is only ad-hoc signed: macOS then asks the user to allow
 it once (see the installation page of the manual), and Windows shows a SmartScreen
 warning. With a Developer ID certificate in the keychain, pass its name to sign and
@@ -27,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -45,6 +50,12 @@ BUNDLE_BUILD_DIR = ROOT / "build" / "pysample"
 NOT_SHIPPED = ("data", "log.txt", "state.yaml", "__pycache__", "pyproject.toml")
 # What the bundle's dependencies were installed from; written once the bundle is created.
 FINGERPRINT_FILE = BUNDLE_BUILD_DIR / f"fingerprint-{sys.platform}.txt"
+# The PyQt6 modules the app, EINstudio, qfluentwidgets and pyqtgraph import (QtTest by
+# pyqtgraph, if present). On macOS the bundle keeps these, the Qt libraries and plugins
+# they need, and nothing else of Qt. Importing another one makes the installed app fail
+# with an ImportError: add it here.
+QT_MODULES = ("QtCore", "QtGui", "QtWidgets", "QtNetwork", "QtOpenGL", "QtOpenGLWidgets", "QtPrintSupport",
+              "QtSvg", "QtXml", "QtTest", "QtWebChannel", "QtWebEngineCore", "QtWebEngineWidgets")
 
 
 def run(*command: str) -> None:
@@ -60,7 +71,66 @@ def fingerprint() -> str:
     digest.update((ROOT / "uv.lock").read_bytes())
     digest.update(json.dumps(briefcaseConfig, sort_keys=True).encode())
     digest.update(version("briefcase").encode())
+    # A module added back needs its libraries, which only a new bundle has.
+    digest.update(" ".join(QT_MODULES).encode())
     return digest.hexdigest()
+
+
+def linked_qt_libraries(binary: Path) -> set[str]:
+    """The Qt frameworks and libraries ``binary`` links to, by name (``QtGui``, ``libavcodec.61.dylib``)."""
+    output = subprocess.run(["otool", "-L", str(binary)], capture_output=True, text=True, check=True).stdout
+    names = set()
+    for line in output.splitlines()[1:]:
+        match = re.search(r"(?:@rpath|@loader_path\S*)/(?:(Qt\w+)\.framework|(lib[\w.]+\.dylib))", line)
+        if match:
+            names.add(match[1] or match[2])
+    return names
+
+
+def remove_unused_qt(app_packages: Path) -> None:
+    """Remove from the macOS bundle the PyQt6 modules not in QT_MODULES and the Qt libraries,
+    plugins and QML files nothing kept needs.
+
+    What the kept modules and WebEngine's helper process link to, directly or through
+    each other, stays; so does every plugin whose libraries all stay.
+    """
+    pyqt = app_packages / "PyQt6"
+    lib = pyqt / "Qt6" / "lib"
+
+    def library_binary(name):
+        return lib / name if name.endswith(".dylib") else lib / f"{name}.framework" / "Versions" / "A" / name
+
+    roots = [pyqt / f"{module}.abi3.so" for module in QT_MODULES if (pyqt / f"{module}.abi3.so").exists()]
+    roots += lib.glob("QtWebEngineCore.framework/Versions/A/Helpers/*.app/Contents/MacOS/*")
+    needed, todo = set(), set().union(*(linked_qt_libraries(root) for root in roots))
+    while todo:
+        name = todo.pop()
+        needed.add(name)
+        if library_binary(name).exists():
+            todo |= linked_qt_libraries(library_binary(name)) - needed
+
+    removed = []
+    for path in sorted(pyqt.glob("Qt*.abi3.so")) + sorted(pyqt.glob("Qt*.pyi")):
+        if path.name.split(".")[0] not in QT_MODULES:
+            path.unlink()
+            removed.append(path)
+    for path in sorted(lib.iterdir()):
+        name = path.name.removesuffix(".framework")
+        if name in needed or path.suffix not in (".framework", ".dylib"):
+            continue
+        if path.is_dir():
+            remove_tree(path)
+        else:
+            path.unlink()
+        removed.append(path)
+    for plugin in sorted((pyqt / "Qt6" / "plugins").rglob("*.dylib")):
+        if not linked_qt_libraries(plugin) <= needed:
+            plugin.unlink()
+            removed.append(plugin)
+    for folder in (pyqt / "Qt6" / "plugins").iterdir():
+        if folder.is_dir() and not any(folder.rglob("*.dylib")):
+            remove_tree(folder)
+    print(f"\nRemoved {len(removed)} unused Qt modules, libraries and plugins; kept {', '.join(sorted(needed))}.")
 
 
 def remove_tree(path: Path) -> None:
@@ -92,12 +162,16 @@ def main() -> None:
     current = fingerprint()
     if not args.fresh and FINGERPRINT_FILE.exists() and FINGERPRINT_FILE.read_text() == current:
         print("\nDependencies and configuration unchanged: updating the sources of the existing bundle.")
-        run(*briefcase, "update", "--no-input")
+        # With the icon, which `update` alone keeps as it was.
+        run(*briefcase, "update", "--update-resources", "--no-input")
     else:
         # From scratch: `briefcase create` refuses to reuse an old bundle without asking.
         remove_tree(BUNDLE_BUILD_DIR)
         run(*briefcase, "create", "--no-input")
         FINGERPRINT_FILE.write_text(current)
+    if sys.platform == "darwin":
+        for app_packages in BUNDLE_BUILD_DIR.glob("macos/app/*.app/Contents/Resources/app_packages"):
+            remove_unused_qt(app_packages)
     run(*briefcase, "build", "--no-input")
     signing = ["--identity", args.identity] if args.identity else ["--adhoc-sign"]
     run(*briefcase, "package", "--no-input", *signing)

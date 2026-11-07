@@ -1,9 +1,9 @@
 Installation
 ============
 
-You need a Mac with macOS 13 (Ventura) or later, or a Windows 10 or 11 PC. You do not
-need to install Python or anything else first: everything the app needs is inside the
-installer.
+You need a Mac with Apple Silicon (M1 or later) and macOS 13 (Ventura) or later, or a
+Windows 10 or 11 PC. You do not need to install Python or anything else first:
+everything the app needs is inside the installer.
 
 .. note::
    This test version is not yet signed with an Apple or Microsoft certificate. Your
@@ -16,13 +16,13 @@ macOS
 Install
 ~~~~~~~
 
-1. Double-click the file you received, ``Twilite Acquisition-<version>.dmg``. A window
+1. Double-click the file you received, ``Twilite-<version>.dmg``. A window
    opens with the app in it.
-2. Drag **Twilite Acquisition** onto the **Applications** folder in that window. The
+2. Drag **Twilite** onto the **Applications** folder in that window. The
    app is large, so copying it takes a minute or two: wait until the Finder's progress
    bar is gone. It can take a moment longer before the app shows in Launchpad and
    Spotlight.
-3. Close the window and eject the disk image (the *Twilite Acquisition* drive in the
+3. Close the window and eject the disk image (the *Twilite* drive in the
    Finder sidebar).
 
 Open it the first time
@@ -31,12 +31,12 @@ Open it the first time
 macOS blocks apps from developers it does not know yet, so the first start takes a few
 extra clicks. You only do this once for each version.
 
-1. Open **Applications** in the Finder and double-click **Twilite Acquisition**.
-2. A message says that *"Twilite Acquisition" Not Opened* (or *cannot be opened
+1. Open **Applications** in the Finder and double-click **Twilite**.
+2. A message says that *"Twilite" Not Opened* (or *cannot be opened
    because the developer cannot be verified*). Click **Done** (or **Cancel**).
    **Do not** click *Move to Trash* (or *Move to Bin*).
 3. Open the **Apple menu** > **System Settings** > **Privacy & Security**.
-4. Scroll down to the **Security** section. It says that *"Twilite Acquisition" was
+4. Scroll down to the **Security** section. It says that *"Twilite" was
    blocked to protect your Mac*. Click **Open Anyway** next to it. (This line only
    shows for about an hour after step 2. If it is missing, do steps 1 and 2 again.)
 
@@ -46,18 +46,18 @@ The app starts. From now on it opens with a double-click, like any other app.
 
 .. tip::
    On macOS 13 or 14 there is a shortcut: in **Applications**, hold the **Control** key,
-   click **Twilite Acquisition**, choose **Open**, then **Open** again in the message.
+   click **Twilite**, choose **Open**, then **Open** again in the message.
    This shortcut no longer works on macOS 15 and later; use the steps above there.
 
 Allow the connection to the twilite
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The first time the app connects to the twilite, macOS asks: *Allow "Twilite Acquisition"
+The first time the app connects to the twilite, macOS asks: *Allow "Twilite"
 to find devices on local networks?* Click **Allow**. The app talks to the twilite over
 the network, so without this it cannot connect.
 
 If you clicked *Don't Allow* by mistake: open **System Settings** > **Privacy &
-Security** > **Local Network** and switch **Twilite Acquisition** on, then quit and
+Security** > **Local Network** and switch **Twilite** on, then quit and
 reopen the app.
 
 .. note::
@@ -67,12 +67,12 @@ reopen the app.
 Windows
 -------
 
-1. Double-click the file you received, ``Twilite Acquisition-<version>.msi``.
+1. Double-click the file you received, ``Twilite-<version>.msi``.
 2. Windows may show *Windows protected your PC*. Click **More info**, then **Run
    anyway**.
 3. Follow the installer: click **Next** and **Install**, and **Yes** if Windows asks
    whether to allow changes.
-4. Start the app from the **Start** menu: **Twilite Acquisition**.
+4. Start the app from the **Start** menu: **Twilite**.
 
 Where your files are
 --------------------
@@ -85,14 +85,14 @@ Where your files are
      - macOS
      - Windows
    * - Acquisitions
-     - ``Twilite Acquisition`` in your home folder
-     - ``C:\Users\<you>\Twilite Acquisition``
+     - ``Twilite`` in your home folder
+     - ``C:\Users\<you>\Twilite``
    * - Device settings (``instrumentConfig.yaml``) and saved app settings
-     - ``~/Library/Application Support/Twilite Acquisition``
-     - ``%LOCALAPPDATA%\Twilite Acquisition``
+     - ``~/Library/Application Support/Twilite``
+     - ``%LOCALAPPDATA%\Twilite``
    * - Log (``log.txt``) and the device logs (``rawlogs``)
-     - ``~/Library/Logs/Twilite Acquisition``
-     - ``%LOCALAPPDATA%\Twilite Acquisition\Logs``
+     - ``~/Library/Logs/Twilite``
+     - ``%LOCALAPPDATA%\Twilite\Logs``
 
 The acquisitions are in your home folder rather than in *Documents* because iCloud and
 OneDrive often sync *Documents* and can remove files from the computer to save space.
@@ -129,7 +129,7 @@ are.
 Uninstall
 ---------
 
-- **macOS**: drag **Twilite Acquisition** from **Applications** to the **Trash** (or **Bin**).
+- **macOS**: drag **Twilite** from **Applications** to the **Trash** (or **Bin**).
 - **Windows**: **Settings** > **Apps** > **Installed apps**, then **Twilite
   Acquisition** > **Uninstall**.
 
@@ -148,4 +148,4 @@ what happened:
 *macOS says the app "is damaged and can't be opened".* The download was flagged in a way
 that the *Open Anyway* steps do not clear. Ask the person who gave you the app for
 help. They can fix it with one Terminal command,
-``xattr -dr com.apple.quarantine "/Applications/Twilite Acquisition.app"``.
+``xattr -dr com.apple.quarantine "/Applications/Twilite.app"``.

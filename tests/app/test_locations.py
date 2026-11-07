@@ -31,14 +31,14 @@ def test_a_checkout_keeps_everything_in_the_app_folder(monkeypatch):
 
 def test_installed_uses_the_user_folders(installed):
     home = installed
-    assert locations.defaultDataDir() == home / "Twilite Acquisition"
+    assert locations.defaultDataDir() == home / "Twilite"
     for path in (locations.settingsDir(), locations.logDir(), locations.stateFile()):
         assert APP_DIR not in path.parents and home in path.parents
     if sys.platform == "darwin":
-        assert locations.settingsDir() == home / "Library" / "Application Support" / "Twilite Acquisition"
-        assert locations.logDir() == home / "Library" / "Logs" / "Twilite Acquisition"
+        assert locations.settingsDir() == home / "Library" / "Application Support" / "Twilite"
+        assert locations.logDir() == home / "Library" / "Logs" / "Twilite"
     elif sys.platform == "win32":
-        assert locations.logDir() == home / "AppData" / "Local" / "Twilite Acquisition" / "Logs"
+        assert locations.logDir() == home / "AppData" / "Local" / "Twilite" / "Logs"
 
 
 def test_installed_copies_the_device_settings_once(installed):
@@ -52,7 +52,7 @@ def test_installed_copies_the_device_settings_once(installed):
 def test_installed_model_writes_outside_the_app_folder(installed):
     Model = load_app_module("model").Model
     model = Model(logging.getLogger("test"), {"twilite": {"host": "x", "port": 1, "dataDir": ""}})
-    assert model.dataDir == str(installed / "Twilite Acquisition")
+    assert model.dataDir == str(installed / "Twilite")
     model.saveState({"qrate": 5})
     assert model.loadState() == {"qrate": 5}
     assert (locations.settingsDir() / "state.yaml").exists()

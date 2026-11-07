@@ -6,7 +6,7 @@ Briefcase build sets ``TWILITEACQ_INSTALLED=1``), the app folder is read-only, s
 =================  ==========================================  ===============================================
                    macOS                                       Windows
 =================  ==========================================  ===============================================
-data               ``~/Twilite Acquisition``                   ``%USERPROFILE%\\Twilite Acquisition``
+data               ``~/Twilite``                               ``%USERPROFILE%\\Twilite``
 settings, state    ``~/Library/Application Support/<name>``    ``%LOCALAPPDATA%\\<name>``
 log, raw logs      ``~/Library/Logs/<name>``                   ``%LOCALAPPDATA%\\<name>\\Logs``
 =================  ==========================================  ===============================================
@@ -23,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-APP_NAME = "Twilite Acquisition"
+APP_NAME = "Twilite"
 INSTALLED_ENV = "TWILITEACQ_INSTALLED"
 APP_DIR = Path(__file__).resolve().parent
 

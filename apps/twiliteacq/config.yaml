@@ -17,12 +17,13 @@ logLevel:   'INFO'
 logFormat:  '%(asctime)s %(levelname)s - %(message)s'
 
 # Main window
-mainWindowTitle:    'Twilite acquisition'
+mainWindowTitle:    'Twilite'
 mainWindowMinSizeX: 1100
 mainWindowMinSizeY: 760
 # Leave blank to use the EINstudio icon. Point it at a .ico or .png in the app
 # folder to brand the window, the taskbar and the desktop shortcut.
-mainWindowIcon:     ''
+# On macOS, main.py uses icons/icon.icns instead (the Dock wants Apple's margin).
+mainWindowIcon:     'icons/icon.ico'
 
 # Splash screen (shown while the app loads)
 useSplash:   true

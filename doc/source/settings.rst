@@ -36,7 +36,7 @@ alone.
    * - dataDir
      - empty
      - Folder of the acquisition files; ``~`` is the home folder. Empty: ``data`` in
-       the app folder when run from the repository, ``~/Twilite Acquisition`` when
+       the app folder when run from the repository, ``~/Twilite`` when
        installed.
    * - rawLog
      - true

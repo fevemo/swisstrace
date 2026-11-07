@@ -10,7 +10,7 @@ twilite:
   # Reconnect attempts after a lost connection, during an acquisition.
   reconnectAttempts: 3
   # Folder of the acquisition files (*.csv); "~" is the home folder. Empty: "data" in the
-  # app folder when run from the repository, "~/Twilite Acquisition" when installed.
+  # app folder when run from the repository, "~/Twilite" when installed.
   dataDir: ""
   # Keep every byte exchanged with the device: in <dataDir>/rawlogs from the repository,
   # beside the log when installed.

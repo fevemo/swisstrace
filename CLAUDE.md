@@ -24,7 +24,8 @@ QT_QPA_PLATFORM=offscreen uv run pytest tests/app
 
 uv run python scripts/record_session.py <ip>    # record a raw device session (becomes a test fixture)
 uv run --group docs sphinx-build -b html doc/source doc/build/html   # manual, shown in the app's Docs page
-uv run --group packaging python scripts/build_installer.py         # .dmg (macOS) / .msi (Windows) via Briefcase, in dist/
+uv run --group packaging python scripts/build_installer.py         # .dmg (macOS, Apple Silicon only) / .msi (Windows) via Briefcase, in dist/
+uv run python scripts/make_icons.py resources/icon.png   # app icon, installer and window: apps/twiliteacq/icons/icon.icns, .ico
 ```
 
 The README mentions `python install.py`, but that file does not exist; use `uv sync`.
@@ -63,4 +64,5 @@ Two layers, strictly separated:
 
 - The app code uses camelCase (EINstudio style); the `twilite` package uses snake_case.
 - `main.py` must import PyQt6 before einstudio (atexit ordering for logging shutdown).
+- The macOS installer keeps only the PyQt6 modules in `QT_MODULES` (`scripts/build_installer.py`) and the Qt libraries they need: importing another PyQt6 module (in the app or a new dependency) means adding it there, or the installed app fails with an ImportError.
 - Design notes and open questions: `doc/design/Twilite acquisition app - Phase 1 implementation plan.md`.
