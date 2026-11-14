@@ -34,7 +34,10 @@ Correction
 ----------
 
 On the *Correction* page, choose the data to correct: **Current** takes the running
-or last acquisition, **Load...** any acquisition file. The plot shows its coincidences
+or last acquisition, **Load...** any acquisition file: one recorded by this app (``.csv``)
+or a curve recorded with PMOD PSAMPLE (``.crv``). A ``.crv`` holds only time stamps and
+counts: its report period is taken from the spacing of the time stamps, and the
+isotope and PET start come from this page as for any file. The plot shows its coincidences
 in counts per second, from the start to the end of the measurement.
 
 Choose the isotope (or *Custom* to enter a half-life and branching ratio), the PET scan
@@ -147,7 +150,7 @@ Calibration
 1. Record a phantom run: background first, then insert the source and leave it until
    the rate is stable.
 2. On the *Calibration* page, press **Current** to use the running or last acquisition,
-   or **Load...** to choose the run.
+   or **Load...** to choose the run (a ``.csv`` from this app or a PSAMPLE ``.crv``).
 3. Drag the grey region over the background before the step and the coloured region
    over the plateau.
 4. Check the PET reference time: the time of day (``HH:MM:SS``) the PET activity is

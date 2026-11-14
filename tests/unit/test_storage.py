@@ -7,8 +7,9 @@ import pytest
 from twilite import Sample, get_isotope
 from twilite.correction import CorrectionSettings
 from twilite.storage import (
-    Acquisition, AcquisitionWriter, export_crv, export_csv, export_events, export_pmod_blood, export_pmod_tac,
-    find_partial_files, read_acquisition, recover, report_period, write_acquisition,
+    CRV_SOURCE, Acquisition, AcquisitionWriter, export_crv, export_csv, export_events, export_pmod_blood,
+    export_pmod_tac, find_partial_files, read_acquisition, read_crv, recover, report_period, sample_times,
+    write_acquisition,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
@@ -179,18 +180,42 @@ def test_export_crv(acquisition, tmp_path):
 def test_export_crv_matches_psample(tmp_path):
     """Reading back a .crv written by PSAMPLE and exporting it again gives the same bytes."""
     original = FIXTURES / "psample" / "PMOD_Psample_Test_D1_D1.crv"
-    acq = Acquisition(original)
-    for i, line in enumerate(original.read_text().splitlines()):
-        stamp, coincidences, singles1, singles2 = line.split("\t")
-        *date, seconds = stamp.split(" ")
-        whole, _, ms = seconds.partition(".")
-        acq.t_wall.append(datetime(*map(int, date), int(whole), int(ms) * 1000).timestamp())
-        acq.index.append(i)
-        acq.coincidences.append(int(coincidences))
-        acq.singles1.append(int(singles1))
-        acq.singles2.append(int(singles2))
-    assert len(acq) == 114
+    acq = read_crv(original)
+    assert len(acq) == 114 and acq.skipped_lines == 0
     assert export_crv(acq, tmp_path / "again.crv").read_bytes() == original.read_bytes()
+
+
+def test_read_crv_with_crlf():
+    """A PSAMPLE calibration run with CRLF line ends, loadable for correction and calibration."""
+    acq = read_acquisition(FIXTURES / "psample" / "2015-06-15_cal_D1.crv")
+    assert len(acq) == 963 and acq.skipped_lines == 0
+    assert acq.metadata == {"source": CRV_SOURCE} and not acq.edits
+    assert acq.t_wall[0] == datetime(2015, 6, 15, 16, 24, 50, 928_000).timestamp()
+    assert (acq.coincidences[0], acq.singles1[0], acq.singles2[0]) == (95, 1192, 1029)
+    assert (acq.coincidences[-1], acq.singles1[-1], acq.singles2[-1]) == (1154, 6196, 5072)
+    assert acq.index == list(range(963)) and acq.extras == [()] * 963
+    assert report_period(acq) == pytest.approx(1.0)
+    assert acq.duration_s == [pytest.approx(1.0)] * 963 and acq.interpolated == [False] * 963
+    # The run starts one period before the first report, as in a recorded file.
+    assert acq.t_rel_s[0] == pytest.approx(1.0) and acq.t_rel_s[-1] == pytest.approx(963.0)
+    assert sample_times(acq) == acq.t_wall
+
+
+def test_read_crv_skips_bad_lines(tmp_path):
+    path = tmp_path / "run.CRV"
+    path.write_bytes(b"2026 10 4 14 52 49.380\t0\t17\t47\n"
+                     b"garbage\n\n"
+                     b"2026 10 4 14 52 50.380\t1\t6\t52\n"
+                     b"2026 10 4 14 52 51.3")  # cut mid-line
+    acq = read_acquisition(path)
+    assert len(acq) == 2 and acq.skipped_lines == 2
+    assert acq.coincidences == [0, 1] and acq.t_wall[1] - acq.t_wall[0] == pytest.approx(1.0)
+
+
+def test_read_empty_crv(tmp_path):
+    path = tmp_path / "empty.crv"
+    path.write_text("")
+    assert len(read_crv(path)) == 0
 
 
 def test_export_pmod_blood(acquisition, tmp_path):

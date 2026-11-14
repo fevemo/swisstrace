@@ -7,7 +7,9 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor
-from PyQt6.QtWidgets import QAbstractItemView, QFileDialog, QHeaderView, QTableWidgetItem, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractItemView, QApplication, QFileDialog, QHeaderView, QTableWidgetItem, QWidget,
+)
 from qfluentwidgets import InfoBar, InfoBarPosition, MessageBox, PushButton, TableWidget
 
 from einstudio.tools.einview import EINview
@@ -114,6 +116,12 @@ class View(EINview):
     ###############################################################################
 
     def configure(self):
+        # EINdialog calls winId() for its title bar theme, which makes the dialog native; by
+        # default Qt then makes its siblings native too, and so every child the View gets
+        # afterwards, MessageBox included. A native MessageBox is an application-modal window:
+        # its exec() disables the View holding it, and on Windows the box then gets no input
+        # (the app hangs on "Unsaved edits" once the Resample window has been opened).
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
         w = self.widgets
         self.setMinimumSize(self.config.mainWindowMinSizeX, self.config.mainWindowMinSizeY)
         self.setWindowTitle(self.config.mainWindowTitle)
@@ -434,7 +442,7 @@ class View(EINview):
         source = self.viewModel.correctionSource()
         path, _ = QFileDialog.getOpenFileName(self, "Load an acquisition",
                                               os.path.dirname(source) if source else self.viewModel.dataDir(),
-                                              "Acquisitions (*.csv)")
+                                              "Acquisitions (*.csv *.crv)")
         if path:
             self.viewModel.loadCorrectionData(path)
 
@@ -889,7 +897,7 @@ class View(EINview):
 
     def _onLoadCalibration(self):
         path, _ = QFileDialog.getOpenFileName(self, "Load a calibration run", self.viewModel.dataDir(),
-                                              "Acquisitions (*.csv)")
+                                              "Acquisitions (*.csv *.crv)")
         if path:
             self.viewModel.loadCalibrationRun(path)
 

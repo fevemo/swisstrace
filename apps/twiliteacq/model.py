@@ -26,7 +26,7 @@ class Model:
     # Where the Settings window saves the instrument settings.
     INSTRUMENT_CONFIG_FILE = str(locations.instrumentConfigFile())
 
-    def __init__(self, logger, instrumentConfig):
+    def __init__(self, logger, instrumentConfig, configDir=None):
         self.logger = logger
         self._readInstrumentConfig(instrumentConfig["twilite"])
         self.appVersion = instrumentConfig["twilite"].get("appVersion", "0.1.0")

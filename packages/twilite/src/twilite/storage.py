@@ -211,7 +211,13 @@ class Acquisition:
 
 
 def read_acquisition(path: str | Path) -> Acquisition:
-    """Read an acquisition file, skipping lines that do not parse (a half-written end)."""
+    """Read an acquisition file, skipping lines that do not parse (a half-written end).
+
+    A ``.crv`` (PMOD PSAMPLE's curve, as :func:`export_crv` writes) is read with
+    :func:`read_crv`; anything else as this module's CSV.
+    """
+    if Path(path).suffix.lower() == ".crv":
+        return read_crv(path)
     acq = Acquisition(Path(path))
     columns: list[str] | None = None
     with open(path, newline="", encoding="utf-8") as file:
@@ -430,6 +436,55 @@ def export_crv(acq: Acquisition, path: str | Path) -> Path:
                 _crv_count(acq.coincidences[i]), _crv_count(acq.singles1[i]), _crv_count(acq.singles2[i]),
             ]) + CRV_LINE_END)
     return path
+
+
+#: Metadata of an acquisition read from a ``.crv``.
+CRV_SOURCE = "PMOD PSAMPLE .crv"
+
+
+def read_crv(path: str | Path) -> Acquisition:
+    """Read a PSAMPLE ``.crv`` (LF or CRLF line ends), the inverse of :func:`export_crv`.
+
+    The file holds only time stamps (PC local time, when each report arrived) and counts,
+    so the rest is derived: ``index`` counts from 0, the report period is the median
+    spacing of the time stamps, and the run starts one period before the first sample
+    (``t_rel_s`` of the first sample is that period, as in a file the app records).
+    Lines that do not parse are counted in ``skipped_lines``.
+    """
+    acq = Acquisition(Path(path), metadata={"source": CRV_SOURCE})
+    with open(path, encoding="ascii", errors="replace") as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                t_wall, coincidences, singles1, singles2 = _crv_row(line)
+            except ValueError:
+                acq.skipped_lines += 1
+                continue
+            acq.index.append(len(acq.index))
+            acq.t_wall.append(t_wall)
+            acq.coincidences.append(coincidences)
+            acq.singles1.append(singles1)
+            acq.singles2.append(singles2)
+            acq.extras.append(())
+    period = report_period(acq)
+    start = acq.t_wall[0] - period if acq.t_wall else 0.0
+    acq.t_rel_s = [t - start for t in acq.t_wall]
+    acq.duration_s = [period] * len(acq)
+    acq.interpolated = [False] * len(acq)
+    return acq
+
+
+def _crv_row(line: str) -> tuple[float, float, float, float]:
+    fields = line.split("\t")
+    if len(fields) != 4:
+        raise ValueError(f"expected 4 tab-separated fields, got {len(fields)}")
+    year, month, day, hour, minute, seconds = fields[0].split()
+    whole, _, fraction = seconds.partition(".")
+    microseconds = round(float(f"0.{fraction or 0}") * 1_000_000)
+    stamp = datetime(int(year), int(month), int(day), int(hour), int(minute), int(whole), microseconds)
+    return (stamp.timestamp(), *(_number(v) for v in fields[1:]))
 
 
 def _crv_stamp(t_wall: float) -> str:

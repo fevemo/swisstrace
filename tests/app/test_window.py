@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +15,8 @@ from tests.app.conftest import (  # noqa: E402
 )
 
 pytestmark = pytest.mark.app
+
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 
 @pytest.fixture
@@ -202,6 +205,45 @@ def test_settings_window(qtbot, window, monkeypatch):
     assert not vm.isSimulating() and vm.model.reconnectAttempts == 5
     assert w.hostEdit.text() == "10.0.0.9" and w.hostEdit.isEnabled()
     assert "reconnectAttempts: 5" in open(vm.model.INSTRUMENT_CONFIG_FILE, encoding="utf-8").read()
+
+
+def test_load_a_psample_crv_for_correction_and_calibration(window, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+
+    w, vm = window.widgets, window.viewModel
+    crv = FIXTURES / "psample" / "2015-06-15_cal_D1.crv"
+    errors, filters = [], []
+    vm.errorOccurred.connect(errors.append)
+
+    def choose(*args):
+        filters.append(args[3])
+        return str(crv), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(choose))
+    w.loadCorrectionDataButton.click()
+    w.loadCalibrationButton.click()
+    assert errors == [] and all("*.crv" in f for f in filters) and len(filters) == 2
+    assert window.handles.correctionData["coincidences"][0] == 95
+    assert w.calibrationFileLabel.text() == crv.name
+    start = datetime(2015, 6, 15, 16, 24, 49, 928_000).timestamp()  # one period before the first sample
+    assert vm.calibrationRunStart() == pytest.approx(start)
+    assert w.calibrationReferenceEdit.text() == "16:24:49"
+
+
+def test_message_boxes_stay_painted_after_the_resample_window(window):
+    """A native MessageBox is a modal window that disables the View holding it: on Windows
+    the app then hangs on the box. The Resample window (an EINdialog, native) must not make
+    the View's later children native."""
+    from PyQt6.QtCore import Qt
+    from qfluentwidgets import MessageBox
+
+    window.viewModel.loadCorrectionData(str(FIXTURES / "psample" / "2015-06-15_cal_D1.crv"))
+    window.widgets.resampleButton.click()
+    assert window.handles.resampleDialog.testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+    box = MessageBox("Unsaved edits", "Close and lose the edits?", window)
+    assert not box.testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+    assert not window.centralWidget().testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+    box.deleteLater()
 
 
 def test_cut_resample_and_save_edited_data(qtbot, window, tmp_path, monkeypatch):
