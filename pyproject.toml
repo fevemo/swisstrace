@@ -16,13 +16,13 @@ explicit = true
 [dependency-groups]
 dev = [
     "twilite",
-    "einstudio>=0.3.0",
+    "einstudio>=0.3.1",
     "numpy>=2.0",
     "pytest>=8.0",
     "pytest-qt>=4.4",
 ]
 docs = [
-    "einstudio[docs]>=0.3.0",
+    "einstudio[docs]>=0.3.1",
 ]
 
 [tool.pytest.ini_options]

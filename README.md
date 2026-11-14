@@ -53,5 +53,5 @@ uv run python scripts/record_session.py 10.0.52.25
 ## Building docs
 
 ```bash
-uv run --group docs sphinx-build -b html doc/source doc/build/html
+uv run --group docs ein doc build --app apps/twiliteacq/
 ```
