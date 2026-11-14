@@ -125,7 +125,7 @@ as sections, used to initialise the dialog.
 | Events CSV | `export_events` | Marks and connection events |
 | Corrected CSV | `export_csv` | Raw counts + time from PET start + kBq/cc, settings in header |
 | PMOD blood `.bld` | `export_pmod_blood` | `sample-time[seconds]`, `whole-blood[kBq/cc]`; times from `sample_times` |
-| PMOD TAC `.tac` | `export_pmod_tac` | Frame start/end (counting interval, clipped at 0) and kBq/cc |
+| PMOD TAC `.tac` | `export_pmod_tac` | Frame start/end (counting interval, clipped at 0) and kBq/cc. Header `start[seconds]	end[kBq/cc]	whole-blood` is PMOD's convention (time unit on the first column, concentration unit on the second), not a typo |
 
 The corrected exports include in-memory edits and need the PET scan start. `.bld` times
 and `.tac` are **provisional** until compared with files exported by PMOD.

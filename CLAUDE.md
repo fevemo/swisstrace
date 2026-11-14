@@ -65,5 +65,5 @@ Two layers, strictly separated:
 - The app code uses camelCase (EINstudio style); the `twilite` package uses snake_case.
 - The app's version is `[project] version` in `apps/twiliteacq/pyproject.toml`: EINstudio puts it on the splash, the View in the window title, the Model in acquisition files (`locations.appVersion()`). `[tool.briefcase] version` in the root `pyproject.toml` must match (a test and `scripts/build_installer.py` check it).
 - `main.py` must import PyQt6 before einstudio (atexit ordering for logging shutdown).
-- The macOS installer keeps only the PyQt6 modules in `QT_MODULES` (`scripts/build_installer.py`) and the Qt libraries they need: importing another PyQt6 module (in the app or a new dependency) means adding it there, or the installed app fails with an ImportError.
+- The installers keep only the PyQt6 modules in `QT_MODULES` (`scripts/build_installer.py`) and the Qt libraries they need: importing another PyQt6 module (in the app or a new dependency) means adding it there, or the installed app fails with an ImportError.
 - Design decisions and open questions: `doc/dev/decisions.md`. File format, timing and correction maths: `doc/dev/data-and-correction.md`.

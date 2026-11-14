@@ -1,6 +1,7 @@
 """Smoke test: build the real window, connect to the simulator, acquire for 5 s, close."""
 
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -262,7 +263,10 @@ def test_message_boxes_stay_painted_after_the_resample_window(window):
 
     window.viewModel.loadCorrectionData(str(FIXTURES / "psample" / "2015-06-15_cal_D1.crv"))
     window.widgets.resampleButton.click()
-    assert window.handles.resampleDialog.testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+    if sys.platform == "win32":
+        # EINdialog styles its title bar through the window handle (winId) only on Windows,
+        # which is what makes it native there; elsewhere the dialog stays non-native.
+        assert window.handles.resampleDialog.testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
     box = MessageBox("Unsaved edits", "Close and lose the edits?", window)
     assert not box.testAttribute(Qt.WidgetAttribute.WA_NativeWindow)
     assert not window.centralWidget().testAttribute(Qt.WidgetAttribute.WA_NativeWindow)

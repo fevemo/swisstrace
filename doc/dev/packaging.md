@@ -23,8 +23,11 @@ configuration in `[tool.briefcase]` of the root `pyproject.toml`. The script:
    `QT_MODULES` changed, or `--fresh` is given.
 
 Size: `cleanup_paths` drops unused packages (PyObjC tests, scipy, QML, translations,
-`.sip` files). On macOS the script also removes Qt libraries not needed by
-`QT_MODULES` (`scripts/build_installer.py`). **Importing another PyQt6 module, in the
+`.sip` files). The script also removes the PyQt6 modules not in `QT_MODULES`
+(`scripts/build_installer.py`) and the Qt libraries and plugins they do not need, found
+with `otool -L` on macOS and by reading the DLLs' import tables on Windows (where only
+`Qt6*.dll` and FFmpeg's DLLs can go: Qt loads `opengl32sw.dll` and `d3dcompiler_47.dll`
+by name, so nothing imports them). **Importing another PyQt6 module, in the
 app or through a new dependency, means adding it to `QT_MODULES`**, or the installed app
 fails with an ImportError.
 

@@ -76,7 +76,8 @@ requirement_installer_args = [
 # - Qt's QML modules and translations (the app has no QML and is in English; on Windows,
 #   Qt6/translations also holds WebEngine's locales, which stay);
 # - PyQt6's .sip files, for compiling extensions.
-# On macOS, scripts/build_installer.py also removes the Qt libraries the app does not load.
+# scripts/build_installer.py also removes the Qt modules, libraries and plugins the app
+# does not load.
 cleanup_paths = [
     "**/app_packages/PyObjCTest",
     "**/app_packages/scipy",

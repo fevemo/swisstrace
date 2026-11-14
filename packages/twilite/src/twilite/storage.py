@@ -528,6 +528,8 @@ def export_pmod_tac(acq: Acquisition, path: str | Path, settings: CorrectionSett
     kept = [i for i, t in enumerate(times) if t >= settings.pet_start]
     _, values, _ = apply(settings, times, acq.coincidences)
     with open(path, "w", newline="", encoding="latin-1") as file:
+        # PMOD's TAC header, not a typo: the first bracket is the time unit, the second
+        # the concentration unit, then the region names.
         file.write("start[seconds]\tend[kBq/cc]\twhole-blood\r\n")
         for i, value in zip(kept, values):
             if not math.isnan(value):
