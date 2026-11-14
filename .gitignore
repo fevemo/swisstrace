@@ -222,3 +222,7 @@ apps/twiliteacq/log.txt
 apps/twiliteacq/state.yaml
 apps/twiliteacq/data/
 doc/build/
+
+# Briefcase
+logs/
+.briefcase/

@@ -65,6 +65,7 @@ Answer them in a 30-minute session on the device recording everything with PuTTY
     - One more report line can arrive after the Enter, before the `> ` prompt; the driver reads up to the prompt.
     - The disconnects a few seconds after stopping are the device's **idle timeout**. It closes a connection after 19.0–19.6 s without traffic at the prompt, with or without a previous `showc`. A bare Enter resets the timer, and the `showc` stream counts as traffic. PuTTY sends nothing while you wait, so it drops too. The app now sends an Enter after 8 s of idle time.
 - [ ] A real PSAMPLE `.crv` file and a corrected TAC export, so our exports can match them byte for byte where it matters.
+    - `.crv` received (2026-10-04 test run, `doc/PMOD_ex_data/`): no header, `Y M D h m s.mmm` with unpadded fields, then coincidences, singles 1, singles 2, tab-separated, `\n` line endings. The export now matches it byte for byte (golden-file test). Still missing: a TAC exported by PMOD.
 - [ ] Which isotopes customers use, and the calibration workflow they follow today (step function or Offset: Enter).
 - [ ] Target OS for customers, and whether instrument PCs have internet access (this decides how the app is installed, see Risks).
 

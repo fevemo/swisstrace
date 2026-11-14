@@ -1,3 +1,5 @@
+import os
+
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from einstudio.tools.threads import runFuncInThread
@@ -37,10 +39,17 @@ class ViewModel(QObject):
     acquisitionSaved = pyqtSignal(str)
     # Interrupted acquisition files found at startup.
     partialFilesFound = pyqtSignal(list)
-    # (t, coincidences) arrays of a loaded calibration run.
-    calibrationRunLoaded = pyqtSignal(object, object)
-    # A computed calibration factor.
-    calibrationComputed = pyqtSignal(float)
+    # (t, coincidences) arrays and the file name of a loaded calibration run.
+    calibrationRunLoaded = pyqtSignal(object, object, str)
+    # (CF, "") when it can be computed, else (None, why not).
+    calibrationComputed = pyqtSignal(object, str)
+    # The data loaded on the Correction page: {"name", "unsaved", "t", "coincidences",
+    # "interpolated", "start"}; "unsaved" is True while there are edits not saved yet.
+    correctionDataLoaded = pyqtSignal(object)
+    # The same, after an edit (cut, resample) or after saving the edited data.
+    correctionDataEdited = pyqtSignal(object)
+    # (t from the PET start, kBq/cc, background) of the loaded data, or None while it cannot be corrected.
+    correctionComputed = pyqtSignal(object)
     # The settings of the last session.
     stateRestored = pyqtSignal(dict)
 
@@ -48,7 +57,6 @@ class ViewModel(QObject):
         super().__init__()
         self.model = model
         self.logger = logger
-        self.showCorrected = False
         self.exportFile = None
         self.lastCalibrationFactor = None
         self._connecting = False
@@ -183,12 +191,8 @@ class ViewModel(QObject):
         if not force and stats["samples"] == self._lastSampleCount:
             return
         self._lastSampleCount = stats["samples"]
-        self.traceUpdated.emit(self.model.getTrace(corrected=self.showCorrected))
+        self.traceUpdated.emit(self.model.getTrace())
         self.statsUpdated.emit(stats)
-
-    def setShowCorrected(self, corrected):
-        self.showCorrected = corrected
-        self._emitTrace(force=True)
 
     ###########################################################################
     # Correction and calibration                                              #
@@ -203,14 +207,57 @@ class ViewModel(QObject):
             self.errorOccurred.emit(f"Invalid correction: {error}")
             return
         self._emitTrace(force=True)
+        self._computeCorrection()
 
-    def loadCalibrationRun(self, path):
+    def loadCorrectionData(self, path=None):
+        """Load an acquisition file to correct; without ``path``, the current acquisition's."""
+        path = path or self.model.currentFile()
+        if path is None:
+            self.errorOccurred.emit("No acquisition yet: run one or load a file.")
+            return
+        try:
+            self.model.loadCorrectionData(path)
+        except (OSError, ValueError) as error:
+            self.errorOccurred.emit(f"Cannot load the data: {error}")
+            return
+        self.correctionDataLoaded.emit(self._correctionData())
+        self._computeCorrection()
+
+    def _correctionData(self):
+        return {"name": self.model.correctionData.path.name, "unsaved": self.model.hasUnsavedEdits(),
+                **self.model.correctionArrays()}
+
+    def measuredBackground(self, petStart):
+        """Mean rate before ``petStart`` of the loaded data, as "Mean before PET" would use; or None."""
+        return self.model.measuredBackground(petStart)
+
+    def correctionSource(self):
+        """Path the loaded correction data was read from, or None."""
+        data = self.model.correctionData
+        return str(data.path) if data is not None else None
+
+    def _computeCorrection(self):
+        if self.model.correctionData is None:
+            return
+        try:
+            result = self.model.correctData()
+        except ValueError as error:
+            self.errorOccurred.emit(f"Cannot correct the data: {error}")
+            result = None
+        self.correctionComputed.emit(result)
+
+    def loadCalibrationRun(self, path=None):
+        """Load an acquisition file as calibration run; without ``path``, the current acquisition's."""
+        path = path or self.model.currentFile()
+        if path is None:
+            self.errorOccurred.emit("No acquisition yet: run one or load a file.")
+            return
         try:
             t, coincidences = self.model.loadCalibrationRun(path)
         except (OSError, ValueError) as error:
             self.errorOccurred.emit(f"Cannot load the calibration run: {error}")
             return
-        self.calibrationRunLoaded.emit(t, coincidences)
+        self.calibrationRunLoaded.emit(t, coincidences, os.path.basename(path))
 
     def isotopeTable(self):
         return self.model.isotopeTable()
@@ -218,20 +265,87 @@ class ViewModel(QObject):
     def calibrationRunStart(self):
         return self.model.calibrationRunStart() if self.model.calibrationRun is not None else None
 
-    def computeCalibration(self, backgroundWindow, plateauWindow, activityPet, referenceTime):
+    def computeCalibration(self, backgroundWindow, plateauWindow, activityPet, referenceTime, isotopeName,
+                           customHalfLife_s=None, customBranchingRatio=None):
+        """Compute CF and emit ``calibrationComputed``, with the reason instead while it cannot be.
+
+        Called on every change of the inputs, so a missing input is not an error.
+        ``referenceTime`` is None while the field is empty or invalid.
+        """
+        cf, reason = None, ""
         if self.model.calibrationRun is None:
-            self.errorOccurred.emit("Load a calibration run first.")
-            return
-        if activityPet <= 0:
-            self.errorOccurred.emit("Enter the phantom activity measured by the PET.")
-            return
-        try:
-            cf = self.model.computeCalibration(backgroundWindow, plateauWindow, activityPet, referenceTime)
-        except ValueError as error:
-            self.errorOccurred.emit(f"Cannot compute the calibration factor: {error}")
-            return
+            reason = "Load a calibration run"
+        elif referenceTime is None:
+            reason = "Enter the PET reference time (HH:MM:SS)"
+        elif activityPet <= 0:
+            reason = "Enter the PET activity"
+        else:
+            try:
+                isotope = self.model.makeIsotope(isotopeName, customHalfLife_s, customBranchingRatio)
+                cf = self.model.computeCalibration(backgroundWindow, plateauWindow, activityPet, referenceTime,
+                                                   isotope)
+            except KeyError as error:
+                reason = f"Unknown isotope {error}"
+            except ValueError as error:
+                reason = str(error)
         self.lastCalibrationFactor = cf
-        self.calibrationComputed.emit(cf)
+        self.calibrationComputed.emit(cf, reason)
+
+    ###########################################################################
+    # Editing the correction data                                             #
+    ###########################################################################
+
+    def cutPreview(self, start, end, nAverage):
+        """``((t, coincidences), "")`` of the line a cut would draw, or ``(None, why not)``."""
+        try:
+            return self.model.cutPreview(start, end, nAverage), ""
+        except ValueError as error:
+            return None, str(error)
+
+    def applyCut(self, start, end, nAverage):
+        """Cut ``[start, end]`` (PC times) out of the correction data; False if it cannot be."""
+        return self._edit(self.model.cut, start, end, nAverage)
+
+    def samplingSections(self):
+        """``[(start, end, period)]`` of the correction data, PC times; ``[]`` without data."""
+        try:
+            return self.model.samplingSections()
+        except ValueError:
+            return []
+
+    def resamplePreview(self, sections):
+        """The preview of ``Model.resamplePreview``, or None without data."""
+        try:
+            return self.model.resamplePreview(sections)
+        except ValueError:
+            return None
+
+    def applyResample(self, sections):
+        """Resample the correction data; ``sections`` is ``[(start, end, period)]``; False if it cannot be."""
+        return self._edit(self.model.resample, sections)
+
+    def hasUnsavedEdits(self):
+        return self.model.hasUnsavedEdits()
+
+    def saveEditedData(self, path):
+        """Save the edited data as a new acquisition file; False if it could not be."""
+        try:
+            self.model.saveEditedData(path)
+        except (OSError, ValueError) as error:
+            self.errorOccurred.emit(f"Cannot save the edited data: {error}")
+            return False
+        self.correctionDataEdited.emit(self._correctionData())
+        return True
+
+    def _edit(self, func, *args):
+        try:
+            func(*args)
+        except ValueError as error:
+            self.errorOccurred.emit(str(error))
+            return False
+        self.correctionDataEdited.emit(self._correctionData())
+        self._computeCorrection()
+        return True
 
     ###########################################################################
     # Files                                                                   #
@@ -250,21 +364,47 @@ class ViewModel(QObject):
         except OSError as error:
             self.errorOccurred.emit(f"Recovery failed: {error}")
 
-    def setExportFile(self, path):
-        self.exportFile = path
-
     def defaultAddress(self):
         return self.model.host, self.model.port, self.model.simulate
+
+    def isSimulating(self):
+        return self.model.simulate
+
+    def instrumentSettings(self):
+        return self.model.instrumentSettings()
+
+    def defaultDataDir(self):
+        return self.model.defaultDataDir()
+
+    def simulatorScenarios(self):
+        return self.model.simulatorScenarios()
+
+    def saveInstrumentSettings(self, settings):
+        """Use and save the settings; return the file, or None (with an error) if they were not saved."""
+        try:
+            return self.model.saveInstrumentSettings(settings)
+        except (ValueError, OSError) as error:
+            self.errorOccurred.emit(f"Settings not saved: {error}")
+            return None
 
     def dataDir(self):
         return self.model.dataDir
 
     def export(self, kind, targetPath):
         if self.exportFile is None:
-            self.errorOccurred.emit("Choose an acquisition to export first.")
+            self.errorOccurred.emit("Run an acquisition first.")
             return
         try:
             self.model.export(kind, self.exportFile, targetPath)
+        except (OSError, ValueError) as error:
+            self.errorOccurred.emit(f"Export failed: {error}")
+
+    def exportCorrected(self, kind, targetPath):
+        if self.model.correctionData is None:
+            self.errorOccurred.emit("Load the data to correct first.")
+            return
+        try:
+            self.model.exportCorrected(kind, targetPath)
         except (OSError, ValueError) as error:
             self.errorOccurred.emit(f"Export failed: {error}")
 

@@ -1,0 +1,4 @@
+# Test fixtures are byte-exact recordings (device sessions, files written by PSAMPLE):
+# never convert their line endings, or a Windows checkout (core.autocrlf) changes them.
+tests/fixtures/** -text
+*.crv -text

@@ -24,6 +24,9 @@ dev = [
 docs = [
     "einstudio[docs]>=0.3.1",
 ]
+packaging = [
+    "briefcase>=0.4.7",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -32,3 +35,58 @@ markers = [
     "simulator_only: uses fault injection, which only the simulator supports",
     "app: needs Qt and EINstudio",
 ]
+
+# Installers for testers and users: a .dmg on macOS, an .msi on Windows.
+# Build with `uv run --group packaging python scripts/build_installer.py`.
+[tool.briefcase]
+project_name = "pysample"
+# The app's identifier is <bundle>.<app name>: ch.swisstrace.twilite.pysample.
+bundle = "ch.swisstrace.twilite"
+version = "0.1.0"
+author = "Felipe Velasquez Moros"
+license = "GPL-3.0-or-later"
+
+[tool.briefcase.app.pysample]
+formal_name = "Twilite"
+description = "Acquisition and correction for the Swisstrace twilite blood sampler"
+# icon.icns on macOS, icon.ico on Windows, in the app folder, where the running app also
+# uses them; scripts/make_icons.py makes both from resources/icon.png (the Swisstrace
+# wordmark on a white tile).
+icon = "apps/twiliteacq/icons/icon"
+# Briefcase names the app's package after the app, so the script copies apps/twiliteacq
+# to build/installer-src/pysample, and Briefcase runs `python -m pysample`, i.e. its
+# __main__.py. The manual (built by the script) lands beside it as `html`, where main.py
+# looks for it.
+sources = ["build/installer-src/pysample", "doc/build/html"]
+requires = ["./packages/twilite", "einstudio>=0.3.0", "numpy>=2.0"]
+# The script writes the constraints from uv.lock, so the installer has the tested versions.
+requirement_installer_args = [
+    "--extra-index-url", "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple",
+    "--constraint", "./build/installer-constraints.txt",
+]
+# Removed after installing, before signing, as nothing the app runs uses them:
+# - pyobjc-core's own test suite (140 compiled modules);
+# - scipy, which qfluentwidgets' [full] extra installs for the blurred "acrylic"
+#   backgrounds, unused here (without it qfluentwidgets draws them without blur);
+# - Qt's QML modules and translations (the app has no QML and is in English; on Windows,
+#   Qt6/translations also holds WebEngine's locales, which stay);
+# - PyQt6's .sip files, for compiling extensions.
+# On macOS, scripts/build_installer.py also removes the Qt libraries the app does not load.
+cleanup_paths = [
+    "**/app_packages/PyObjCTest",
+    "**/app_packages/scipy",
+    "**/app_packages/scipy.libs",
+    "**/app_packages/PyQt6/Qt6/qml",
+    "**/app_packages/PyQt6/Qt6/translations/*.qm",
+    "**/app_packages/PyQt6/bindings",
+]
+
+[tool.briefcase.app.pysample.macOS]
+# Only for the Mac building it (Apple Silicon), not universal: half the size, as every
+# library would otherwise hold both Intel and Apple Silicon code. Built on an Intel Mac,
+# the app would be for Intel Macs only.
+universal_build = false
+# scipy (through pyqt6-fluent-widgets) and Qt 6.11 have no wheels for older macOS.
+min_os_version = "13.0"
+# Shown in macOS's "find devices on your local network" prompt, at the first connection.
+info."NSLocalNetworkUsageDescription" = "Twilite connects to your twilite blood sampler on the network."

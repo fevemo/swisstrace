@@ -1,0 +1,4 @@
+# The app's shape profile: EINstudioStandard (the built-in defaults) with these keys changed.
+# Valid keys are those in einstudio/styles/shape/EINstudioStandard.yaml.
+
+section_header_height_px: 32            # card title bars (Standard: 40)

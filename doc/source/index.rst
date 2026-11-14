@@ -1,7 +1,7 @@
-Twilite acquisition
-########################################
+Twilite
+#######
 
-**Twilite acquisition** records the count rates of a Swisstrace twilite blood sampler
+**Twilite** records the count rates of a Swisstrace twilite blood sampler
 over its telnet connection and turns them into an activity concentration curve, in
 place of PMOD PSAMPLE's acquisition and correction functions. Its screens are pages
 in the navigation bar on the left: *Acquisition* to connect and record, *Correction*
@@ -16,6 +16,7 @@ calibration factor from a phantom run.
 .. toctree::
    :maxdepth: 2
 
+   installation
    usage
    settings
    code

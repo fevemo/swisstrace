@@ -50,6 +50,21 @@ Record a full session first; it answers the open questions in
 uv run python scripts/record_session.py 10.0.52.25
 ```
 
+## Installer
+
+```bash
+uv run --group packaging python scripts/build_installer.py   # dist/*.dmg on macOS, dist/*.msi on Windows
+uv run --group packaging python scripts/build_installer.py --fresh   # reinstall all dependencies
+uv run python scripts/make_icons.py resources/icon.png   # app icon (apps/twiliteacq/icons/icon.icns, .ico) from a PNG
+```
+
+Builds for the platform it runs on, with Briefcase (`[tool.briefcase]` in
+`pyproject.toml`). Until there is a signing certificate the installer is only ad-hoc
+signed; the manual's *Installation* page walks users through the warnings that gives.
+Installed, the app keeps its data, settings and logs in the user's folders
+(`apps/twiliteacq/locations.py`); run from the repository, everything stays in
+`apps/twiliteacq/` as before.
+
 ## Building docs
 
 ```bash

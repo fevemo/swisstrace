@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("einstudio")
 
-from tests.app.conftest import load_app_module  # noqa: E402
+from tests.app.conftest import load_app_module, write_step_run  # noqa: E402
 
 pytestmark = pytest.mark.app
 
@@ -150,3 +150,67 @@ def test_lost_connection_is_reported(qtbot, model_factory, qapp):
 def test_invalid_correction_is_reported(qtbot, viewmodel):
     with qtbot.waitSignal(viewmodel.errorOccurred, timeout=1000):
         viewmodel.setCorrection("Custom", None, None, 1.0, customHalfLife_s=-5.0)
+
+
+def test_correction_data_signals(qtbot, viewmodel):
+    with qtbot.waitSignal(viewmodel.errorOccurred, timeout=1000):
+        viewmodel.loadCorrectionData()  # no acquisition yet
+    connect(qtbot, viewmodel)
+    with qtbot.waitSignal(viewmodel.acquisitionChanged, timeout=5000):
+        viewmodel.startAcquisition(qrate=1, endAfter_s=0.8)
+    qtbot.waitUntil(lambda: not viewmodel.isAcquiring(), timeout=5000)
+
+    with qtbot.waitSignals([viewmodel.correctionDataLoaded, viewmodel.correctionComputed],
+                           timeout=1000) as blocker:
+        viewmodel.loadCorrectionData()
+    data = blocker.all_signals_and_args[0].args[0]
+    assert data["name"].endswith("_twilite.csv") and len(data["t"]) >= 3
+    assert blocker.all_signals_and_args[1].args[0] is None  # no PET start yet
+
+    with qtbot.waitSignal(viewmodel.correctionComputed, timeout=1000) as computed:
+        viewmodel.setCorrection("F-18", float(data["t"][1]), None, 1.0)
+    t, activity, _ = computed.args[0]
+    assert len(t) == len(activity) == len(data["t"]) - 1
+
+
+def test_calibration_is_computed_or_says_why_not(qtbot, viewmodel, tmp_path):
+    results = []
+    viewmodel.calibrationComputed.connect(lambda cf, reason: results.append((cf, reason)))
+    start = 1_790_000_000.0
+    windows = ((0, 95), (150, 290))
+    viewmodel.computeCalibration(*windows, 50.0, start, "F-18")
+    assert results[-1] == (None, "Load a calibration run")
+
+    with qtbot.waitSignal(viewmodel.calibrationRunLoaded, timeout=1000) as loaded:
+        viewmodel.loadCalibrationRun(str(write_step_run(tmp_path, start)))
+    assert loaded.args[2].endswith("_twilite.csv") and len(loaded.args[0]) == 60
+
+    viewmodel.computeCalibration(*windows, 50.0, None, "F-18")
+    assert results[-1] == (None, "Enter the PET reference time (HH:MM:SS)")
+    viewmodel.computeCalibration(*windows, 0.0, start, "F-18")
+    assert results[-1] == (None, "Enter the PET activity")
+    viewmodel.computeCalibration(*windows, 50.0, start, "Xx-99")
+    assert results[-1][0] is None and results[-1][1].startswith("Unknown isotope")
+    viewmodel.computeCalibration(windows[1], windows[0], 50.0, start, "F-18")  # windows swapped
+    assert results[-1] == (None, "The plateau is not above the background")
+    viewmodel.computeCalibration(*windows, 50.0, start, "F-18")
+    assert results[-1] == (pytest.approx(50 * 0.967 / 1000, rel=1e-4), "")
+    assert viewmodel.lastCalibrationFactor == results[-1][0]
+
+
+def test_edit_signals(qtbot, viewmodel, tmp_path):
+    viewmodel.loadCorrectionData(str(write_step_run(tmp_path)))
+    start = viewmodel.model.correctionArrays()["start"]
+    assert viewmodel.cutPreview(start + 1000, start + 2000, 1) == (None, "No samples in the selection")
+    with qtbot.waitSignal(viewmodel.errorOccurred, timeout=1000):
+        assert not viewmodel.applyCut(start + 1000, start + 2000, 1)
+
+    with qtbot.waitSignals([viewmodel.correctionDataEdited, viewmodel.correctionComputed], timeout=1000) as blocker:
+        assert viewmodel.applyCut(start + 20, start + 40, 1)
+    data = blocker.all_signals_and_args[0].args[0]
+    assert data["unsaved"] and data["interpolated"].sum() == 5
+    assert viewmodel.hasUnsavedEdits()
+
+    with qtbot.waitSignal(viewmodel.correctionDataEdited, timeout=1000) as saved:
+        assert viewmodel.saveEditedData(str(tmp_path / "edited.csv"))
+    assert saved.args[0]["name"] == "edited.csv" and not saved.args[0]["unsaved"]
