@@ -47,7 +47,9 @@ APP_DIR = ROOT / "apps" / "twiliteacq"
 # The app's name in [tool.briefcase], which is also the name of its package in the installer.
 STAGED_APP_DIR = ROOT / "build" / "installer-src" / "pysample"
 BUNDLE_BUILD_DIR = ROOT / "build" / "pysample"
-NOT_SHIPPED = ("data", "log.txt", "state.yaml", "__pycache__", "pyproject.toml")
+# The app's pyproject.toml ships: it holds the version the splash, the window title and
+# the acquisition files show.
+NOT_SHIPPED = ("data", "log.txt", "state.yaml", "__pycache__")
 # What the bundle's dependencies were installed from; written once the bundle is created.
 FINGERPRINT_FILE = BUNDLE_BUILD_DIR / f"fingerprint-{sys.platform}.txt"
 # The PyQt6 modules the app, EINstudio, qfluentwidgets and pyqtgraph import (QtTest by
@@ -74,6 +76,19 @@ def fingerprint() -> str:
     # A module added back needs its libraries, which only a new bundle has.
     digest.update(" ".join(QT_MODULES).encode())
     return digest.hexdigest()
+
+
+def check_version() -> None:
+    """Stop unless ``[tool.briefcase] version`` (the installer's) is the app's version.
+
+    The app's version is ``[project] version`` in apps/twiliteacq/pyproject.toml, which the
+    running app shows; Briefcase cannot read it from there, so both are set by hand.
+    """
+    app = tomllib.loads((APP_DIR / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    installer = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["briefcase"]["version"]
+    if app != installer:
+        sys.exit(f"The app is version {app} (apps/twiliteacq/pyproject.toml) but the installer {installer} "
+                 "([tool.briefcase] version in pyproject.toml): set both to the same version.")
 
 
 def linked_qt_libraries(binary: Path) -> set[str]:
@@ -148,6 +163,7 @@ def main() -> None:
     parser.add_argument("--identity", help="code-signing identity; default: ad-hoc signing only")
     parser.add_argument("--fresh", action="store_true", help="create the bundle again even if nothing requires it")
     args = parser.parse_args()
+    check_version()
 
     run("uv", "run", "--group", "docs", "sphinx-build", "-q", "-b", "html", "doc/source", "doc/build/html")
 

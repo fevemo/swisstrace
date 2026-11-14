@@ -56,3 +56,11 @@ def test_installed_model_writes_outside_the_app_folder(installed):
     model.saveState({"qrate": 5})
     assert model.loadState() == {"qrate": 5}
     assert (locations.settingsDir() / "state.yaml").exists()
+
+
+def test_the_installer_has_the_app_version():
+    """The app shows the version of its pyproject.toml; Briefcase stamps the installer with its own."""
+    import tomllib
+
+    root = tomllib.loads((APP_DIR.parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert locations.appVersion() == root["tool"]["briefcase"]["version"]

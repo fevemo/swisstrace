@@ -1,7 +1,7 @@
 """The twilite telnet protocol as pure functions: line splitting, parsing, commands.
 
 Everything here matches what a *Coincident Counter - Telnet Server V3.00* sent and
-accepted on 2026-10-03 (see ``doc/protocol.md``). The device sends no telnet option
+accepted on 2026-10-03 (see ``doc/dev/protocol.md``). The device sends no telnet option
 negotiation and does not echo, so plain lines over TCP are all there is.
 """
 

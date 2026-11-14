@@ -1,22 +1,30 @@
 Twilite
 #######
 
-**Twilite** records the count rates of a Swisstrace twilite blood sampler
-over its telnet connection and turns them into an activity concentration curve, in
-place of PMOD PSAMPLE's acquisition and correction functions. Its screens are pages
-in the navigation bar on the left: *Acquisition* to connect and record, *Correction*
-for the decay correction and the exports, and *Calibration* to compute the
-calibration factor from a phantom run.
+**Twilite** records the blood activity measured by a Swisstrace twilite blood sampler
+and turns it into an activity concentration curve for your PET analysis. It replaces
+the acquisition and correction functions of PMOD PSAMPLE.
 
-.. note::
-   The device's report format is not confirmed yet (see ``doc/protocol.md`` in the
-   repository). Until it is, the app runs against a built-in simulated twilite when
-   ``simulate: true`` is set in ``instrumentConfig.yaml``.
+A typical study goes like this:
+
+1. :doc:`acquire`: connect to the twilite and record the blood activity during the scan.
+2. :doc:`calibrate`: compute the calibration factor from a phantom measurement. You
+   only need to do this when you calibrate the twilite, not for every study.
+3. :doc:`correct`: subtract the background, correct for decay and apply the
+   calibration, and clean up the curve if needed.
+4. :doc:`export`: save the corrected curve for PMOD or for your own analysis.
+
+The app has one page for each step in the bar on the left: **Acquisition**,
+**Correction** and **Calibration**. **Settings** (the gear) holds the connection
+settings, and **Docs** shows this manual.
 
 .. toctree::
    :maxdepth: 2
 
    installation
-   usage
+   acquire
+   calibrate
+   correct
+   export
    settings
-   code
+   troubleshooting

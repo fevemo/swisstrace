@@ -25,10 +25,10 @@ QT_QPA_PLATFORM=offscreen uv run pytest tests/app
 uv run python scripts/record_session.py <ip>    # record a raw device session (becomes a test fixture)
 uv run --group docs sphinx-build -b html doc/source doc/build/html   # manual, shown in the app's Docs page
 uv run --group packaging python scripts/build_installer.py         # .dmg (macOS, Apple Silicon only) / .msi (Windows) via Briefcase, in dist/
-uv run python scripts/make_icons.py resources/icon.png   # app icon, installer and window: apps/twiliteacq/icons/icon.icns, .ico
+uv run python scripts/make_icons.py   # from resources/swisstrace-logo.svg: apps/twiliteacq/icons/icon.icns (on macOS), icon.ico, splash.png
 ```
 
-The README mentions `python install.py`, but that file does not exist; use `uv sync`.
+Developer docs are in `doc/dev/` (Markdown; start at `doc/dev/README.md`). The user manual is `doc/source/` (Sphinx): task-oriented, no implementation details — put those in `doc/dev/`.
 
 ## Architecture
 
@@ -47,7 +47,7 @@ Two layers, strictly separated:
 
 ## Protocol facts that shape the code
 
-`doc/protocol.md` is the source of truth; the driver and simulator implement exactly that (firmware *Coincident Counter - Telnet Server V3.00*) and nothing more. Change both together, and update the doc when the device teaches something new. Key points:
+`doc/dev/protocol.md` is the source of truth; the driver and simulator implement exactly that (firmware *Coincident Counter - Telnet Server V3.00*) and nothing more. Change both together, and update the doc when the device teaches something new. Key points:
 
 - Report line: `[n] singles1 singles2 coincidences 0.0 0.0`, values in counts/s over the `qrate` period; `[n]` never resets except on power-up.
 - The device drops connections after ~19 s idle at the prompt, so anything holding a connection must send keepalives (empty line after 8 s idle).
@@ -63,6 +63,7 @@ Two layers, strictly separated:
 ## Conventions
 
 - The app code uses camelCase (EINstudio style); the `twilite` package uses snake_case.
+- The app's version is `[project] version` in `apps/twiliteacq/pyproject.toml`: EINstudio puts it on the splash, the View in the window title, the Model in acquisition files (`locations.appVersion()`). `[tool.briefcase] version` in the root `pyproject.toml` must match (a test and `scripts/build_installer.py` check it).
 - `main.py` must import PyQt6 before einstudio (atexit ordering for logging shutdown).
 - The macOS installer keeps only the PyQt6 modules in `QT_MODULES` (`scripts/build_installer.py`) and the Qt libraries they need: importing another PyQt6 module (in the app or a new dependency) means adding it there, or the installed app fails with an ImportError.
-- Design notes and open questions: `doc/design/Twilite acquisition app - Phase 1 implementation plan.md`.
+- Design decisions and open questions: `doc/dev/decisions.md`. File format, timing and correction maths: `doc/dev/data-and-correction.md`.

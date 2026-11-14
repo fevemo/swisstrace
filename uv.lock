@@ -10,13 +10,13 @@ members = [
 
 [manifest.dependency-groups]
 dev = [
-    { name = "einstudio", specifier = ">=0.3.0", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" },
+    { name = "einstudio", specifier = ">=0.3.1", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-qt", specifier = ">=4.4" },
     { name = "twilite", editable = "packages/twilite" },
 ]
-docs = [{ name = "einstudio", extras = ["docs"], specifier = ">=0.3.0", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" }]
+docs = [{ name = "einstudio", extras = ["docs"], specifier = ">=0.3.1", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" }]
 packaging = [{ name = "briefcase", specifier = ">=0.4.7" }]
 
 [[package]]
@@ -409,7 +409,7 @@ wheels = [
 
 [[package]]
 name = "einstudio"
-version = "0.3.0"
+version = "0.3.3"
 source = { registry = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" }
 dependencies = [
     { name = "packaging" },
@@ -421,7 +421,7 @@ dependencies = [
     { name = "typer" },
 ]
 wheels = [
-    { url = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/files/cc2340e72558299fe84cc64e38238bb650396e44492df9b3c2986f33873f24e8/einstudio-0.3.0-py3-none-any.whl", hash = "sha256:cc2340e72558299fe84cc64e38238bb650396e44492df9b3c2986f33873f24e8" },
+    { url = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/files/4a4c3c5dfb139380dedad130fae2598506b10341a03eb4aa0c29627886520073/einstudio-0.3.3-py3-none-any.whl", hash = "sha256:4a4c3c5dfb139380dedad130fae2598506b10341a03eb4aa0c29627886520073" },
 ]
 
 [package.optional-dependencies]
@@ -4330,7 +4330,7 @@ source = { editable = "packages/twilite" }
 
 [[package]]
 name = "twiliteacq"
-version = "0.1.0"
+version = "0.1.1"
 source = { virtual = "apps/twiliteacq" }
 dependencies = [
     { name = "einstudio" },
@@ -4340,7 +4340,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "einstudio", specifier = ">=0.3.0", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" },
+    { name = "einstudio", specifier = ">=0.3.1", index = "https://gitlab.uzh.ch/api/v4/projects/14123/packages/pypi/simple" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "twilite", editable = "packages/twilite" },
 ]

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(thisFileDir))
 # Import Qt before einstudio (which imports logging): atexit runs callbacks in reverse,
 # so logging.shutdown then runs before PyQt deletes einstudio's log handler (a QObject).
 import PyQt6.QtCore  # noqa: F401
+from PyQt6.QtGui import QColor
 from einstudio.tools.configmanager import ConfigManager
 from einstudio.tools.einapplication import EINApplication
 
@@ -54,7 +55,27 @@ def adaptConfig(installed):
     ConfigManager.loadConfig = staticmethod(loadMainConfig)
 
 
+SPLASH_TEXT = "#000000"
+
+
+def adaptSplash():
+    """Paint the splash's version and status line in black.
+
+    EINstudio paints them in the palette's muted text colour, made for its dark default
+    splash card; the app's splash (icons/splash.png, from scripts/make_icons.py) is white.
+    """
+    splashColors = EINApplication._splashColors
+
+    def whiteSplashColors(self, configManager):
+        colors = splashColors(self, configManager)
+        colors['message'] = QColor(SPLASH_TEXT)
+        return colors
+
+    EINApplication._splashColors = whiteSplashColors
+
+
 if __name__ == '__main__':
     adaptConfig(locations.installed())
+    adaptSplash()
     EINApplication(appDir=thisFileDir).launch()
     sys.exit(0)

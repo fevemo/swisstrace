@@ -29,7 +29,7 @@ class Model:
     def __init__(self, logger, instrumentConfig, configDir=None):
         self.logger = logger
         self._readInstrumentConfig(instrumentConfig["twilite"])
-        self.appVersion = instrumentConfig["twilite"].get("appVersion", "0.1.0")
+        self.appVersion = locations.appVersion()
 
         self.client = None
         self.simulator = None

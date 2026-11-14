@@ -21,6 +21,7 @@ Standard library only, so the Model can use it without Qt.
 import os
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 APP_NAME = "Twilite"
@@ -80,6 +81,16 @@ def instrumentConfigFile():
         userCopy.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(shipped, userCopy)
     return userCopy
+
+
+def appVersion():
+    """``[project] version`` of the app's ``pyproject.toml``, the one place the version is set.
+
+    EINstudio reads the same file for the splash (``ConfigManager.appVersion``), and the
+    installer ships it and checks that ``[tool.briefcase] version`` matches.
+    """
+    with open(APP_DIR / "pyproject.toml", "rb") as file:
+        return tomllib.load(file)["project"]["version"]
 
 
 def _localAppData():

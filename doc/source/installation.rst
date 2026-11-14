@@ -84,18 +84,17 @@ Where your files are
    * -
      - macOS
      - Windows
-   * - Acquisitions
+   * - Measurements
      - ``Twilite`` in your home folder
      - ``C:\Users\<you>\Twilite``
-   * - Device settings (``instrumentConfig.yaml``) and saved app settings
+   * - Settings
      - ``~/Library/Application Support/Twilite``
      - ``%LOCALAPPDATA%\Twilite``
-   * - Log (``log.txt``) and the device logs (``rawlogs``)
+   * - Logs (``log.txt``, ``rawlogs``), for problem reports
      - ``~/Library/Logs/Twilite``
      - ``%LOCALAPPDATA%\Twilite\Logs``
 
-The acquisitions are in your home folder rather than in *Documents* because iCloud and
-OneDrive often sync *Documents* and can remove files from the computer to save space.
+You can choose another folder for the measurements in :doc:`settings`.
 
 To open one of the other folders:
 
@@ -104,27 +103,17 @@ To open one of the other folders:
   otherwise.
 - **Windows**: press **Windows key + R**, paste the path from the table and press Enter.
 
-Connect to your twilite
------------------------
+Next step
+---------
 
-This test version starts with a **simulated** twilite, so you can try it without the
-device. To use your twilite instead:
-
-1. If the app is connected, press **Disconnect**.
-2. Click **Settings** (the gear at the bottom of the bar on the left).
-3. Switch **Simulated twilite** off, enter your twilite's IP address next to
-   *Address*, and click **Save**.
-4. Press **Connect**.
-
-The app keeps these settings for the next time. The other settings, which you do not
-normally need to change, are described in :doc:`settings`.
+The app starts with a simulated twilite so you can try it. To connect it to your
+twilite, see :ref:`Connect to your twilite`.
 
 Update
 ------
 
 Install the new version as you installed the first one. On macOS, drag it to
-**Applications** and choose **Replace**. Your acquisitions and settings stay where they
-are.
+**Applications** and choose **Replace**. Your measurements and settings are kept.
 
 Uninstall
 ---------
@@ -133,19 +122,13 @@ Uninstall
 - **Windows**: **Settings** > **Apps** > **Installed apps**, then **Twilite
   Acquisition** > **Uninstall**.
 
-This removes the app only. Your acquisitions, settings and logs stay in the folders
+This removes the app only. Your measurements, settings and logs stay in the folders
 listed above; delete those folders too if you no longer need them.
 
-If something goes wrong
------------------------
+If macOS says the app is damaged
+--------------------------------
 
-Send these to whoever gave you the app, with a short description of what you did and
-what happened:
-
-- the log, ``log.txt``, and the ``rawlogs`` folder (see `Where your files are`_);
-- a screenshot of any error message.
-
-*macOS says the app "is damaged and can't be opened".* The download was flagged in a way
-that the *Open Anyway* steps do not clear. Ask the person who gave you the app for
+If macOS says *"Twilite" is damaged and can't be opened*, the download was flagged in a
+way that the *Open Anyway* steps do not clear. Ask the person who gave you the app for
 help. They can fix it with one Terminal command,
 ``xattr -dr com.apple.quarantine "/Applications/Twilite.app"``.

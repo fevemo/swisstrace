@@ -1,6 +1,6 @@
 """Asyncio telnet server that behaves like a twilite (Coincident Counter V3.00).
 
-Every byte it sends copies a session recorded on 2026-10-03 (see ``doc/protocol.md``).
+Every byte it sends copies a session recorded on 2026-10-03 (see ``doc/dev/protocol.md``).
 Device state (the counters and the report rate) lives in the simulator and survives
 reconnects, as on the real device. Use :meth:`TwiliteSimulator.start_in_thread` to run
 it next to blocking code such as tests or the GUI.

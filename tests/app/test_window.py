@@ -49,6 +49,29 @@ def window(qapp, qtbot, tmp_path, monkeypatch):
     view.close()
 
 
+def test_title_shows_the_version(window):
+    version = window.configManager.appVersion
+    assert version == load_app_module("locations").appVersion()
+    assert window.windowTitle() == f"Twilite v{version}"
+
+
+def test_splash_image_is_shown_at_its_size():
+    from PyQt6.QtGui import QImage
+
+    # EINstudio scales a splash image larger than 360 px down.
+    assert QImage(str(APP_DIR / "icons" / "splash.png")).size().width() <= 360
+
+
+def test_splash_text_is_black_on_the_white_splash(qapp, monkeypatch):
+    from einstudio.tools.einapplication import EINApplication
+    from PyQt6.QtGui import QColor
+
+    # EINstudio's own colours, without its style reload (which upsets the other window tests).
+    monkeypatch.setattr(EINApplication, "_splashColors", lambda self, configManager: {"message": QColor("white")})
+    load_app_module("main").adaptSplash()
+    assert EINApplication._splashColors(None, None)["message"].name() == "#000000"
+
+
 def test_connect_acquire_for_five_seconds_and_close(qtbot, window, tmp_path, monkeypatch):
     from PyQt6.QtCore import QPointF, Qt
     from PyQt6.QtWidgets import QFileDialog

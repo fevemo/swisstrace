@@ -27,8 +27,9 @@ mainWindowIcon:     'icons/icon.ico'
 
 # Splash screen (shown while the app loads)
 useSplash:   true
-# Leave blank for a generated title card: the window title in the palette's colours.
-splashImage: ''
+# The Swisstrace logo on EINstudio's splash card, made by scripts/make_icons.py.
+# EINstudio paints the version (pyproject.toml) and the loading status on it.
+splashImage: 'icons/splash.png'
 
 # Appearance
 fluentTheme:  'DARK'

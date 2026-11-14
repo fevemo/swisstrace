@@ -42,16 +42,21 @@ markers = [
 project_name = "pysample"
 # The app's identifier is <bundle>.<app name>: ch.swisstrace.twilite.pysample.
 bundle = "ch.swisstrace.twilite"
-version = "0.1.0"
+# Must be the app's version ([project] version in apps/twiliteacq/pyproject.toml), which
+# the app shows; scripts/build_installer.py checks it.
+version = "0.1.1"
 author = "Felipe Velasquez Moros"
 license = "GPL-3.0-or-later"
+# The Windows .msi shows it on a page the user must accept: Briefcase refuses to build an
+# .msi without one. The GPL as PyQt6 (GPL too) ships it.
+license-files = ["LICENSE"]
 
 [tool.briefcase.app.pysample]
 formal_name = "Twilite"
 description = "Acquisition and correction for the Swisstrace twilite blood sampler"
 # icon.icns on macOS, icon.ico on Windows, in the app folder, where the running app also
-# uses them; scripts/make_icons.py makes both from resources/icon.png (the Swisstrace
-# wordmark on a white tile).
+# uses them; scripts/make_icons.py makes both, and the splash, from
+# resources/swisstrace-logo.svg (the Swisstrace wordmark, stacked on a white tile).
 icon = "apps/twiliteacq/icons/icon"
 # Briefcase names the app's package after the app, so the script copies apps/twiliteacq
 # to build/installer-src/pysample, and Briefcase runs `python -m pysample`, i.e. its

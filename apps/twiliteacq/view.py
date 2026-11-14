@@ -124,7 +124,9 @@ class View(EINview):
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
         w = self.widgets
         self.setMinimumSize(self.config.mainWindowMinSizeX, self.config.mainWindowMinSizeY)
-        self.setWindowTitle(self.config.mainWindowTitle)
+        # The version as on the splash, which EINstudio reads from the app's pyproject.toml.
+        version = self.configManager.appVersion
+        self.setWindowTitle(f"{self.config.mainWindowTitle} v{version}" if version else self.config.mainWindowTitle)
 
         host, port, _ = self.viewModel.defaultAddress()
         w.hostEdit.setText(host)

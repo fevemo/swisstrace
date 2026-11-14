@@ -1,57 +1,48 @@
 Settings
 ========
 
-Instrument
-----------
+Click **Settings** (the gear at the bottom of the bar on the left). The settings can
+only be changed while the app is disconnected. Press **Save** to keep them; they apply
+from the next connection.
 
-The *Settings* window (the gear at the bottom of the navigation bar) shows and changes
-these settings; it can be opened only while disconnected, and they apply from the next
-connection. **Save** writes them to ``instrumentConfig.yaml``, keeping its comments.
+Connect to your twilite
+-----------------------
 
-``instrumentConfig.yaml`` describes the twilite of this installation. It travels with
-the instrument PC, not with the source code. Run from the repository, it is the one in
-the app folder. Installed, the app copies it at its first start to the settings folder
-(see :doc:`installation`) and then uses that copy, which updates of the app leave
-alone.
+The app starts with a simulated twilite so you can try it without the device. To use
+your twilite:
+
+1. If the app is connected, press **Disconnect**.
+2. Open **Settings** and switch **Simulated twilite** off.
+3. Enter your twilite's IP address next to **Address**, and click **Save**.
+4. Press **Connect** on the **Acquisition** page.
+
+All settings
+------------
+
+You do not normally need to change anything other than the address.
 
 .. list-table::
-   :widths: 26 20 54
+   :widths: 28 72
    :header-rows: 1
 
-   * - Key
-     - Default
-     - Meaning
-   * - host, port
-     - 10.0.52.25, 23
-     - Address shown in the *Connection* card at the first start; after that, the app
-       remembers the last one connected to.
-   * - timeout_s
-     - 5.0
-     - Seconds without an answer before the connection counts as lost. While
-       streaming, two report periods are added.
-   * - reconnectAttempts
-     - 3
-     - Reconnections tried, one second apart, after a lost connection during an
-       acquisition. When they all fail, the file is closed and the acquisition ends.
-   * - dataDir
-     - empty
-     - Folder of the acquisition files; ``~`` is the home folder. Empty: ``data`` in
-       the app folder when run from the repository, ``~/Twilite`` when
-       installed.
-   * - rawLog
-     - true
-     - Also write every byte exchanged with the device to ``rawlogs``: in ``dataDir``
-       when run from the repository, beside the log when installed. Send this folder
-       along with any problem report.
-   * - simulate
-     - true
-     - Start a simulated twilite inside the app and connect to it instead.
-   * - simulator
-     - see the file
-     - Scenario, isotope and idle timeout of the simulator.
+   * - Setting
+     - What it does
+   * - Simulated twilite
+     - Connect to a twilite simulated by the app instead of a real one.
+   * - Address
+     - Your twilite's IP address and port (normally 23).
+   * - Timeout (s)
+     - How long the app waits for an answer before it treats the connection as lost.
+   * - Reconnect attempts
+     - How many times the app tries to reconnect if the connection is lost during a
+       recording.
+   * - Data folder
+     - Where measurements are saved. Leave it empty to use the folder shown.
+   * - Raw device logs
+     - Keep a detailed record of the communication with the twilite. Leave it on: it
+       helps to diagnose problems.
+   * - Simulator
+     - Shown only with *Simulated twilite* on: what the simulated twilite measures.
 
-Window
-------
-
-The app saves the values of the controls in ``state.yaml`` when the window closes and
-restores them at the next start.
+The app also remembers the values you entered on its pages (sample rate, isotope,
+calibration factor and so on) and restores them at the next start.
